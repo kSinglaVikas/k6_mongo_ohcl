@@ -40,8 +40,8 @@ const FIND_WAIT_MS = parseFloat(__ENV.FIND_WAIT_MS || '1');
 const AGG_WAIT_MS  = parseFloat(__ENV.AGG_WAIT_MS  || '10');
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
-const FIND_START_TS = '2026-06-02T09:15:00Z';
-const FIND_END_TS   = '2026-06-02T15:30:00Z';
+const FIND_START_TS = '2026-06-11T09:15:00Z';
+const FIND_END_TS   = '2026-06-11T15:30:00Z';
 
 // Timestamp range for aggregate random windows (supply via env for accuracy)
 const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2026-05-07T00:00:00Z';
