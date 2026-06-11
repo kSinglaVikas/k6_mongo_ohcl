@@ -1,0 +1,38 @@
+# Binaries
+mongo_wrapper
+*.exe
+*.dll
+*.so
+*.dylib
+
+# k6
+k6
+k6.exe
+
+# Go
+bin/
+dist/
+*.go.sum
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs & Output
+*.log
+results.json
+results-*.json
+benchmark_*.txt
+atlas_run_log/
+logs/
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+go.mod.backup
