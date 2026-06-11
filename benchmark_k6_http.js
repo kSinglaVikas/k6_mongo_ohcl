@@ -44,12 +44,18 @@ const FIND_START_TS = '2026-06-02T09:15:00Z';
 const FIND_END_TS   = '2026-06-02T15:30:00Z';
 
 // Timestamp range for aggregate random windows (supply via env for accuracy)
-const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2024-01-01T00:00:00Z';
-const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2026-06-11T00:00:00Z';
+const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2026-05-07T00:00:00Z';
+const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2026-06-02T00:00:00Z';
 
 const SYMBOL_POOL = [
-  'KFINTECH.NS', 'ABCAPITAL.NS', 'FSL.NS',      'BRITANNIA.NS',  'EIEL.NS',
-  'BAJAJ-AUTO.NS', 'LICHSGFIN.NS', 'SWSOLAR.NS', 'PHOENIXLTD.NS', 'ARVINDFASN.NS',
+  'MFSL.NS',       'PNGJL.BO', 'ORICONENT.NS',  'OCCLLTD.BO',
+  'ADANIGREEN.BO', 'CREATIVEYE.NS',  'CLEDUCATE.BO',  'SUNTV.BO',
+  'DAICHI.BO',     'NITTAGELA.BO', 'CHEVIOT.BO',    'AARON.NS',
+  'JUBLPHARMA.NS', 'ZFSTEERING.NS',  'GILLETTE.BO',   'SUDARSCHEM.NS',
+  'CSBBANK.NS',    'SEDEMAC.NS',  'ALGOQUANT.NS',  'MOREPENLAB.NS',
+  'WEWORK.BO',     'ASTRAL.BO',  '3IINFOLTD.NS',  'AEPL.NS',
+  'AEROFLEX.BO', 'TCS.NS', 'HIKAL.BO', 'GODREJAGRO.NS', 'MINDTREE.NS',
+  'MCDOWELL-N.BO', 'BIRLACORPN.BO', 'GODREJCP.NS', 'VOLTAS.NS', 'APOLLOHOSP.NS',
 ];
 
 // ---------------------------------------------------------------------------
