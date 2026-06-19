@@ -219,7 +219,6 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	t0 := time.Now()
 	opts := options.Find()
 	if req.Projection != nil {
 		opts.SetProjection(req.Projection)
@@ -228,7 +227,9 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 		opts.SetSort(req.Sort)
 	}
 
+	t0 := time.Now()
 	cursor, err := coll.Find(ctx, normalizedFilter, opts)
+	elapsed := time.Since(t0).Seconds() * 1000.0
 	if err != nil {
 		debugLogf("find query failed error=%v", err)
 		writeResponse(w, &QueryResponse{Error: err.Error()})
@@ -243,7 +244,6 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	elapsed := time.Since(t0).Seconds() * 1000.0
 	debugLogf("find response count=%d duration_ms=%.2f", len(results), elapsed)
 	writeResponse(w, &QueryResponse{
 		DurationMs: elapsed,
