@@ -8,12 +8,16 @@
 cd /Users/vikas.k.singla/working/customers/INDMoney/k6_mongo_ohcl
 
 export MONGO_URI="mongodb+srv://user:pass@cluster.mongodb.net/ohcl_data?retryWrites=true"
+export DB_NAME="ohcl_data"
+export ONED_EQ_COLLECTION="oned-eq"
+export HISTORIC_EQ_COLLECTION="historic-eq"
 ./start_wrapper.sh
 ```
 
 You should see:
-```
-Connected to MongoDB: mongodb+srv://... / ohcl_data
+
+```text
+Connected to MongoDB database ohcl_data (pool: 100-200)
 Starting HTTP server on :9000
 ```
 
@@ -22,98 +26,72 @@ Starting HTTP server on :9000
 ```bash
 cd /Users/vikas.k.singla/working/customers/INDMoney/k6_mongo_ohcl
 
-./run_benchmark.sh [USERS] [MINUTES] [FIND_WAIT_MS] [AGG_WAIT_MS]
+k6 run \
+  --env API_BASE_URL=http://localhost:9000 \
+  --env TOTAL_RPS=100 \
+  --env MINUTES=2 \
+  --env RATE_STEP=1 \
+  --env RATE_STEP_SECONDS=5 \
+  --env PREALLOCATED_VUS=50 \
+  --env MAX_VUS=500 \
+  benchmark_k6_http.js
 ```
 
-Default: `./run_benchmark.sh 20 2 1 10` (20 VUs, 2 min **parallel** find+agg, 1ms wait between finds, 10ms between aggs)
+## Traffic Mix
 
-Example with custom parameters:
-```bash
-./run_benchmark.sh 50 5 2 15
-```
+The script runs 5 scenarios in parallel using weighted request rates:
 
-## Expected Output
+1. `oned_eq_5m_agg` — 50%
+2. `oned_eq_1m_find` — 10%
+3. `historic_eq_3d_5m_agg` — 20%
+4. `historic_eq_3d_1m_find` — 5%
+5. `historic_eq_15_30m_agg` — 15%
 
-The benchmark runs two scenarios **in parallel** for the same duration:
-
-**Parallel execution (0-2min)**:
-```
-✓ [=====>      ] 50 VUs  1m59s  completed find + agg queries simultaneously
-```
-
-Both find queries on 1d_stocks and aggregation queries on 7d_stocks run concurrently.
-
-**Summary** (at the end):
-```
-     find_latency_ms ........... avg=42.34   p(95)=65.78  p(99)=89.12  max=234.56
-     agg_latency_ms ........... avg=128.91  p(95)=159.23 p(99)=187.45 max=512.34
-     agg_latency_5m_ms ........ avg=142.56  p(95)=178.45 p(99)=201.67 max=623.89
-     agg_latency_15m_ms ....... avg=125.42  p(95)=156.23 p(99)=189.45 max=512.34
-     agg_latency_30m_ms ....... avg=118.76  p(95)=142.89 p(99)=171.23 max=398.12
-     find_errors ............. 0
-     agg_errors .............. 0
-     http_errors ............ 0
-```
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `main.go` | Go HTTP wrapper (3 endpoints: /find, /aggregate, /health) |
-| `benchmark_k6_http.js` | k6 test script (2 scenarios: find, aggregate) |
-| `go.mod` | Go module definition |
-| `start_wrapper.sh` | Start the Go wrapper service |
-| `run_benchmark.sh` | Run the k6 benchmark |
-| `README.md` | Full documentation |
+With `TOTAL_RPS=100`, target rates become `50/10/20/5/15 req/s`.
 
 ## Environment Variables
 
-**Before starting wrapper (`start_wrapper.sh`):**
+### Wrapper (`main.go`)
+
 ```bash
-export MONGO_URI="mongodb://localhost:27017"          # MongoDB URI
-export DB_NAME="ohcl_data"                             # Database
-export FIND_COLLECTION="1d_stocks"                     # Collection for find queries
-export AGG_COLLECTION="7d_stocks"                      # Collection for agg queries
-export PORT="9000"                                     # HTTP port (default 9000)
+export MONGO_URI="mongodb://localhost:27017"
+export DB_NAME="ohcl_data"
+export ONED_EQ_COLLECTION="oned-eq"
+export HISTORIC_EQ_COLLECTION="historic-eq"
+export PORT="9000"
+export DEBUG="false"
 ```
 
-**Before running k6 (`run_benchmark.sh`):**
+### k6 (`benchmark_k6_http.js`)
+
 ```bash
-export API_BASE_URL="http://localhost:9000"            # Wrapper URL
-export USERS="20"                                      # VUs per scenario
-export MINUTES="2"                                     # Duration (both scenarios run in parallel)
-export FIND_WAIT_MS="1"                                # Sleep after find (ms)
-export AGG_WAIT_MS="10"                                # Sleep after agg (ms)
+export API_BASE_URL="http://localhost:9000"
+export TOTAL_RPS="100"
+export PREALLOCATED_VUS="50"
+export MAX_VUS="500"
+export RATE_STEP="1"
+export RATE_STEP_SECONDS="5"
+export MINUTES="2"
+export AGG_MIN_TS="2026-05-07T00:00:00Z"
+export AGG_MAX_TS="2026-06-02T00:00:00Z"
 ```
 
 ## Troubleshooting
 
-### "Go wrapper is not running!"
+### "API health check failed"
+
 ```bash
-# Make sure Terminal 1 is still running ./start_wrapper.sh
-# Check: curl http://localhost:9000/health
+curl http://localhost:9000/health
 ```
 
-### "Connection refused" from wrapper
-- Check MongoDB URI is correct
-- Verify MongoDB is accessible
-- Try: `mongosh "$MONGO_URI"`
+### Too many dropped iterations / can’t keep target rate
 
-### High error rates during benchmark
-- Reduce `USERS` or increase `FIND_WAIT_MS` / `AGG_WAIT_MS`
-- Check MongoDB logs for slow queries
-- Monitor server CPU/memory
+1. Increase `PREALLOCATED_VUS` and/or `MAX_VUS`.
+2. Reduce `TOTAL_RPS`.
+3. Check MongoDB CPU, memory, and index coverage.
 
-## Next Steps
+### Query counts are zero
 
-1. **Run with different USERS**: `./run_benchmark.sh 5` (baseline) → `./run_benchmark.sh 100` (stress)
-2. **Export results**: `k6 run benchmark_k6_http.js --out json=results.json`
-3. **Tune MongoDB**: Create indexes based on aggregation $match patterns
-4. **Compare results**: Save baseline, make changes, re-run, compare metrics
-
-## Key Differences from Original Python Script
-
-- **Python**: Uses multiprocessing (OS processes), PyMongo driver
-- **k6 + Go**: Uses virtual users (async I/O), HTTP communication
-- **Measurement**: k6 measures end-to-end including HTTP; Python measures just driver time
-- **Benefit**: No complex xk6 build, native k6, easier to extend metrics
+1. Confirm collection names are correct (`ONED_EQ_COLLECTION`, `HISTORIC_EQ_COLLECTION`).
+2. Confirm `id` and `ts` fields exist in data.
+3. Ensure requested timestamp windows contain data.

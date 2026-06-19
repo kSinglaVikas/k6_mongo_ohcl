@@ -21,12 +21,12 @@
  *
  * Tune via env vars (all optional):
  *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:8080)
- *   USERS              — VUs per scenario           (default: 20)
- *   USER_STEP          — VUs added per step         (default: 1)
- *   USER_STEP_SECONDS  — seconds per user step      (default: 5)
+ *   TOTAL_RPS          — total req/sec across scenarios (default: 100)
+ *   PREALLOCATED_VUS   — pre-allocated VUs per scenario (default: 50)
+ *   MAX_VUS            — max VUs per scenario          (default: 500)
+ *   RATE_STEP          — req/sec added per step        (default: 1)
+ *   RATE_STEP_SECONDS  — seconds per rate step         (default: 5)
  *   MINUTES            — duration of each scenario  (default: 2)
- *   FIND_WAIT_MS       — sleep after each find (ms) (default: 1)
- *   AGG_WAIT_MS        — sleep after each agg  (ms) (default: 10)
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
  *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
@@ -35,18 +35,17 @@
 
 import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
-import { sleep } from 'k6';
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 const API_BASE_URL = __ENV.API_BASE_URL  || 'http://localhost:9000';
-const USERS        = parseInt(__ENV.USERS   || '20');
-const USER_STEP    = parseInt(__ENV.USER_STEP || '1');
-const USER_STEP_SECONDS = parseInt(__ENV.USER_STEP_SECONDS || '5');
+const TOTAL_RPS    = parseInt(__ENV.TOTAL_RPS || '100');
+const PREALLOCATED_VUS = parseInt(__ENV.PREALLOCATED_VUS || '50');
+const MAX_VUS      = parseInt(__ENV.MAX_VUS || '500');
+const RATE_STEP    = parseInt(__ENV.RATE_STEP || '1');
+const RATE_STEP_SECONDS = parseInt(__ENV.RATE_STEP_SECONDS || '5');
 const MINUTES      = parseInt(__ENV.MINUTES || '2');
-const FIND_WAIT_MS = parseFloat(__ENV.FIND_WAIT_MS || '1');
-const AGG_WAIT_MS  = parseFloat(__ENV.AGG_WAIT_MS  || '10');
 const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
 
@@ -83,24 +82,29 @@ const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
 
-function buildStepStages(maxVUs, stepVUs, stepSeconds) {
+function buildRateStages(targetRate, stepRate, stepSeconds) {
   const stages = [];
-  const safeStep = Math.max(stepVUs, 1);
+  const safeStep = Math.max(stepRate, 1);
   const safeSeconds = Math.max(stepSeconds, 1);
+  const safeTarget = Math.max(targetRate, 1);
 
-  for (let target = safeStep; target <= maxVUs; target += safeStep) {
-    stages.push({ duration: `${safeSeconds}s`, target: Math.min(target, maxVUs) });
+  for (let target = safeStep; target <= safeTarget; target += safeStep) {
+    stages.push({ duration: `${safeSeconds}s`, target: Math.min(target, safeTarget) });
   }
 
-  if (stages.length === 0 || stages[stages.length - 1].target !== maxVUs) {
-    stages.push({ duration: `${safeSeconds}s`, target: maxVUs });
+  if (stages.length === 0 || stages[stages.length - 1].target !== safeTarget) {
+    stages.push({ duration: `${safeSeconds}s`, target: safeTarget });
   }
 
+  stages.push({ duration: `${MINUTES}m`, target: safeTarget });
   return stages;
 }
 
-const rampStages = buildStepStages(USERS, USER_STEP, USER_STEP_SECONDS);
-const steppedStages = [...rampStages, { duration: `${MINUTES}m`, target: USERS }];
+const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.50));
+const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
+const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
+const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.05));
+const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.15));
 
 // ---------------------------------------------------------------------------
 // k6 options — 5 scenarios running in parallel
@@ -108,46 +112,56 @@ const steppedStages = [...rampStages, { duration: `${MINUTES}m`, target: USERS }
 export const options = {
   scenarios: {
     oned_eq_1m_find: {
-      executor:  'ramping-vus',
-      startVUs:  0,
-      stages:    steppedStages,
-      gracefulRampDown: '0s',
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
       startTime: '0s',
       exec:      'find1minEqScenario',
       tags:      { scenario: 'oned_eq_1m_find' },
     },
     oned_eq_5m_agg: {
-      executor:  'ramping-vus',
-      startVUs:  0,
-      stages:    steppedStages,
-      gracefulRampDown: '0s',
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
       startTime: '0s',
       exec:      'agg5minEqScenario',
       tags:      { scenario: 'oned_eq_5m_agg' },
     },
     historic_eq_3d_5m_agg: {
-      executor:  'ramping-vus',
-      startVUs:  0,
-      stages:    steppedStages,
-      gracefulRampDown: '0s',
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_HIST_EQ_3D_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
       startTime: '0s',
       exec:      'aggHistoric3d5mScenario',
       tags:      { scenario: 'historic_eq_3d_5m_agg' },
     },
     historic_eq_3d_1m_find: {
-      executor:  'ramping-vus',
-      startVUs:  0,
-      stages:    steppedStages,
-      gracefulRampDown: '0s',
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_HIST_EQ_3D_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
       startTime: '0s',
       exec:      'findHistoricScenario',
       tags:      { scenario: 'historic_eq_3d_1m_find' },
     },
     historic_eq_15_30m_agg: {
-      executor:  'ramping-vus',
-      startVUs:  0,
-      stages:    steppedStages,
-      gracefulRampDown: '0s',
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_HIST_EQ_15_30M_AGG, RATE_STEP, RATE_STEP_SECONDS),
       startTime: '0s',
       exec:      'aggHistoricScenario',
       tags:      { scenario: 'historic_eq_15_30m_agg' },
@@ -219,8 +233,6 @@ function runFind(payload, trend) {
   } catch (e) {
     findErrors.add(1);
   }
-
-  sleep(FIND_WAIT_MS / 1000);
 }
 
 function runAggregate(payload, trend) {
@@ -246,8 +258,6 @@ function runAggregate(payload, trend) {
   } catch (e) {
     aggErrors.add(1);
   }
-
-  sleep(AGG_WAIT_MS / 1000);
 }
 
 // ---------------------------------------------------------------------------
