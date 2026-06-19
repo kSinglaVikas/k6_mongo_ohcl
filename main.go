@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -20,6 +23,7 @@ var (
 	dbName         string
 	findColl       string
 	aggColl        string
+	debugEnabled   bool
 	maxPoolSize    uint64
 	minPoolSize    uint64
 	mongoClient    *mongo.Client
@@ -56,13 +60,25 @@ func init() {
 	if dbName == "" {
 		dbName = "ohcl_data"
 	}
-	findColl = os.Getenv("FIND_COLLECTION")
+	findColl = os.Getenv("ONED_EQ_COLLECTION")
 	if findColl == "" {
-		findColl = "1d_stocks"
+		findColl = os.Getenv("FIND_COLLECTION")
 	}
-	aggColl = os.Getenv("AGG_COLLECTION")
+	if findColl == "" {
+		findColl = "oned-eq"
+	}
+	aggColl = os.Getenv("HISTORIC_EQ_COLLECTION")
 	if aggColl == "" {
-		aggColl = "7d_stocks"
+		aggColl = os.Getenv("AGG_COLLECTION")
+	}
+	if aggColl == "" {
+		aggColl = "historic-eq"
+	}
+
+	if v := os.Getenv("DEBUG"); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			debugEnabled = enabled
+		}
 	}
 
 	// Connection pool configuration
@@ -81,6 +97,71 @@ func init() {
 	}
 
 	log.Printf("Connection pool config: min=%d, max=%d", minPoolSize, maxPoolSize)
+	log.Printf("Debug logging enabled: %t", debugEnabled)
+}
+
+func debugLogf(format string, args ...interface{}) {
+	if !debugEnabled {
+		return
+	}
+	log.Printf("[debug] "+format, args...)
+}
+
+func compactJSON(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "<marshal_error>"
+	}
+	s := string(b)
+	if len(s) > 400 {
+		return s[:400] + "..."
+	}
+	return s
+}
+
+func isComparisonOperator(key string) bool {
+	switch key {
+	case "$gte", "$gt", "$lte", "$lt", "$eq":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseRFC3339String(s string) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func normalizeQueryValue(v interface{}, parentKey string) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		normalized := make(map[string]interface{}, len(x))
+		for k, child := range x {
+			normalized[k] = normalizeQueryValue(child, k)
+		}
+		return normalized
+	case []interface{}:
+		normalized := make([]interface{}, len(x))
+		for i, item := range x {
+			normalized[i] = normalizeQueryValue(item, parentKey)
+		}
+		return normalized
+	case string:
+		if isComparisonOperator(parentKey) {
+			if t, ok := parseRFC3339String(x); ok {
+				return t
+			}
+		}
+		return x
+	default:
+		return v
+	}
 }
 
 // connectMongo establishes the MongoDB connection with configured pooling.
@@ -104,7 +185,7 @@ func connectMongo() error {
 
 	mongoClient = client
 	db = client.Database(dbName)
-	log.Printf("Connected to MongoDB: %s / %s (pool: %d-%d)", mongoURI, dbName, minPoolSize, maxPoolSize)
+	log.Printf("Connected to MongoDB database %s (pool: %d-%d)", dbName, minPoolSize, maxPoolSize)
 	return nil
 }
 
@@ -125,6 +206,15 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 		req.Collection = findColl
 	}
 
+	normalizedFilter := req.Filter
+	if req.Filter != nil {
+		if v, ok := normalizeQueryValue(req.Filter, "").(map[string]interface{}); ok {
+			normalizedFilter = v
+		}
+	}
+
+	debugLogf("find request filter=%s projection=%s sort=%s", compactJSON(normalizedFilter), compactJSON(req.Projection), compactJSON(req.Sort))
+
 	coll := db.Collection(req.Collection)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -138,8 +228,9 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 		opts.SetSort(req.Sort)
 	}
 
-	cursor, err := coll.Find(ctx, req.Filter, opts)
+	cursor, err := coll.Find(ctx, normalizedFilter, opts)
 	if err != nil {
+		debugLogf("find query failed error=%v", err)
 		writeResponse(w, &QueryResponse{Error: err.Error()})
 		return
 	}
@@ -147,11 +238,13 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 
 	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
+		debugLogf("find cursor read failed error=%v", err)
 		writeResponse(w, &QueryResponse{Error: err.Error()})
 		return
 	}
 
 	elapsed := time.Since(t0).Seconds() * 1000.0
+	debugLogf("find response count=%d duration_ms=%.2f", len(results), elapsed)
 	writeResponse(w, &QueryResponse{
 		DurationMs: elapsed,
 		Count:      len(results),
@@ -175,6 +268,8 @@ func handleAggregate(w http.ResponseWriter, r *http.Request) {
 		req.Collection = aggColl
 	}
 
+	debugLogf("aggregate request pipeline=%s", compactJSON(req.Pipeline))
+
 	coll := db.Collection(req.Collection)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -182,12 +277,19 @@ func handleAggregate(w http.ResponseWriter, r *http.Request) {
 	// Convert pipeline to bson.A
 	pipeline := make(bson.A, len(req.Pipeline))
 	for i, stage := range req.Pipeline {
-		pipeline[i] = bson.M(stage)
+		if v, ok := normalizeQueryValue(stage, "").(map[string]interface{}); ok {
+			pipeline[i] = bson.M(v)
+		} else {
+			pipeline[i] = bson.M(stage)
+		}
 	}
+
+	debugLogf("aggregate normalized pipeline=%s", compactJSON(pipeline))
 
 	t0 := time.Now()
 	cursor, err := coll.Aggregate(ctx, pipeline)
 	if err != nil {
+		debugLogf("aggregate query failed error=%v", err)
 		writeResponse(w, &QueryResponse{Error: err.Error()})
 		return
 	}
@@ -195,11 +297,13 @@ func handleAggregate(w http.ResponseWriter, r *http.Request) {
 
 	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
+		debugLogf("aggregate cursor read failed error=%v", err)
 		writeResponse(w, &QueryResponse{Error: err.Error()})
 		return
 	}
 
 	elapsed := time.Since(t0).Seconds() * 1000.0
+	debugLogf("aggregate response count=%d duration_ms=%.2f", len(results), elapsed)
 	writeResponse(w, &QueryResponse{
 		DurationMs: elapsed,
 		Count:      len(results),
@@ -234,8 +338,31 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Starting HTTP server on :%s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	srv := &http.Server{Addr: ":" + port, Handler: nil}
+
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("Starting HTTP server on :%s", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	select {
+	case sig := <-sigCh:
+		log.Printf("Shutdown signal received: %s", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Graceful shutdown failed: %v", err)
+		} else {
+			log.Printf("HTTP server stopped gracefully")
+		}
+	case err := <-errCh:
 		log.Fatalf("Server error: %v", err)
 	}
 }

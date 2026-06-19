@@ -1,9 +1,12 @@
 /**
  * k6 benchmark using HTTP wrapper for MongoDB queries.
  *
- * Two sequential scenarios:
- *   1. find_benchmark  — random find() on <FIND_COLLECTION> with a fixed date window
- *   2. agg_benchmark   — random OHLC aggregation on <AGG_COLLECTION> with random bin size + window
+ * 5 query types in parallel:
+ *   1. find_1min_eq         — find all 1-min candles for one EQ ID
+ *   2. agg_5min_eq          — aggregate 5-min OHLC candles for one EQ ID
+ *   3. find_1min_historic   — find all 1-min candles for one FNO ID for a date
+ *   4. find_historic        — find 3 days of 1-min candles for one ID from historic-eq
+ *   5. agg_historic         — aggregate historic-eq into random 15/30-min OHLC bins
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -22,6 +25,9 @@
  *   MINUTES            — duration of each scenario  (default: 2)
  *   FIND_WAIT_MS       — sleep after each find (ms) (default: 1)
  *   AGG_WAIT_MS        — sleep after each agg  (ms) (default: 10)
+ *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
+ *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
+ *   HISTORIC_FNO_COLLECTION — historic-fno collection (default: historic-fno)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
  *   AGG_MAX_TS         — newest ts for agg window   (default: 2026-06-11T00:00:00Z)
  */
@@ -38,6 +44,9 @@ const USERS        = parseInt(__ENV.USERS   || '20');
 const MINUTES      = parseInt(__ENV.MINUTES || '2');
 const FIND_WAIT_MS = parseFloat(__ENV.FIND_WAIT_MS || '1');
 const AGG_WAIT_MS  = parseFloat(__ENV.AGG_WAIT_MS  || '10');
+const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
+const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
+const HISTORIC_FNO_COLLECTION = __ENV.HISTORIC_FNO_COLLECTION || 'historic-fno';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
 const FIND_START_TS = '2026-06-11T09:15:00Z';
@@ -47,6 +56,11 @@ const FIND_END_TS   = '2026-06-11T15:30:00Z';
 const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2026-05-07T00:00:00Z';
 const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2026-06-02T00:00:00Z';
 
+const HISTORIC_DATE_START_TS = __ENV.HISTORIC_DATE_START_TS || '2026-06-10T00:00:00Z';
+const HISTORIC_DATE_END_TS   = __ENV.HISTORIC_DATE_END_TS   || '2026-06-11T00:00:00Z';
+const HISTORIC_3D_START_TS   = __ENV.HISTORIC_3D_START_TS   || '2026-06-08T00:00:00Z';
+const HISTORIC_3D_END_TS     = __ENV.HISTORIC_3D_END_TS     || '2026-06-11T00:00:00Z';
+
 const SYMBOL_POOL = [
   'JYOTICNC.NS', 'M&MFIN.NS', 'KPITTECH.NS', 'REDINGTON.NS', 'RTNPOWER.BO',
   'LENSKART.NS', 'RECLTD.NS', 'BLACKBUCK.NS', 'CAMS.NS', 'EICHERMOT.NS',
@@ -55,38 +69,68 @@ const SYMBOL_POOL = [
   'BIKAJI.NS', 'WOCKPHARMA.NS', 'DATAPATTNS.NS', 'IOC.NS', 'WIPRO.BO',
 ];
 
+const FNO_ID_POOL = [
+  'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX',
+];
+
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
 // ---------------------------------------------------------------------------
-const findLatencyMs = new Trend('find_latency_ms',    true);
-const aggLatencyMs  = new Trend('agg_latency_ms',     true);
-const aggLatency5m  = new Trend('agg_latency_5m_ms',  true);
-const aggLatency15m = new Trend('agg_latency_15m_ms', true);
-const aggLatency30m = new Trend('agg_latency_30m_ms', true);
-const findErrors    = new Counter('find_errors');
-const aggErrors     = new Counter('agg_errors');
+const find1minEqLatencyMs       = new Trend('find_1min_eq_latency_ms', true);
+const agg5minEqLatencyMs        = new Trend('agg_5min_eq_latency_ms', true);
+const find1minHistoricLatencyMs = new Trend('find_1min_historic_latency_ms', true);
+const findHistoricLatencyMs     = new Trend('find_historic_latency_ms', true);
+const aggHistoricLatencyMs      = new Trend('agg_historic_latency_ms', true);
+const aggHistoric15mLatencyMs   = new Trend('agg_historic_15m_latency_ms', true);
+const aggHistoric30mLatencyMs   = new Trend('agg_historic_30m_latency_ms', true);
+const findErrors                = new Counter('find_errors');
+const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
 
 // ---------------------------------------------------------------------------
-// k6 options — two back-to-back scenarios, each lasting MINUTES minutes
+// k6 options — 5 scenarios running in parallel
 // ---------------------------------------------------------------------------
 export const options = {
   scenarios: {
-    find_benchmark: {
+    find_1min_eq: {
       executor:  'constant-vus',
       vus:       USERS,
       duration:  `${MINUTES}m`,
       startTime: '0s',
-      exec:      'findScenario',
-      tags:      { scenario: 'find' },
+      exec:      'find1minEqScenario',
+      tags:      { scenario: 'find_1min_eq' },
     },
-    agg_benchmark: {
+    agg_5min_eq: {
       executor:  'constant-vus',
       vus:       USERS,
       duration:  `${MINUTES}m`,
-      startTime: '0s',   // starts in parallel with find_benchmark
-      exec:      'aggScenario',
-      tags:      { scenario: 'agg' },
+      startTime: '0s',
+      exec:      'agg5minEqScenario',
+      tags:      { scenario: 'agg_5min_eq' },
+    },
+    find_1min_historic: {
+      executor:  'constant-vus',
+      vus:       USERS,
+      duration:  `${MINUTES}m`,
+      startTime: '0s',
+      exec:      'find1minHistoricScenario',
+      tags:      { scenario: 'find_1min_historic' },
+    },
+    find_historic: {
+      executor:  'constant-vus',
+      vus:       USERS,
+      duration:  `${MINUTES}m`,
+      startTime: '0s',
+      exec:      'findHistoricScenario',
+      tags:      { scenario: 'find_historic' },
+    },
+    agg_historic: {
+      executor:  'constant-vus',
+      vus:       USERS,
+      duration:  `${MINUTES}m`,
+      startTime: '0s',
+      exec:      'aggHistoricScenario',
+      tags:      { scenario: 'agg_historic' },
     },
   },
   // Surface all custom Trends in the end-of-test summary
@@ -131,28 +175,9 @@ function pickRandomWindow(minIso, maxIso, binSizeMinutes) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 1 — find()
+// Shared execution helpers
 // ---------------------------------------------------------------------------
-export function findScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
-  
-  const payload = {
-    filter: {
-      t: symbol,
-      ts: {
-        $gte: FIND_START_TS,
-        $lt: FIND_END_TS,
-      },
-    },
-    projection: {
-      _id: 0,
-      t: 0,
-    },
-    sort: {
-      ts: 1,
-    },
-  };
-
+function runFind(payload, trend) {
   const res = http.post(`${API_BASE_URL}/find`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'find' },
@@ -169,7 +194,7 @@ export function findScenario() {
     if (body.error) {
       findErrors.add(1);
     } else if (body.duration_ms !== undefined) {
-      findLatencyMs.add(body.duration_ms);
+      trend.add(body.duration_ms);
     }
   } catch (e) {
     findErrors.add(1);
@@ -178,19 +203,169 @@ export function findScenario() {
   sleep(FIND_WAIT_MS / 1000);
 }
 
+function runAggregate(payload, trend, binSize) {
+  const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
+    headers: { 'Content-Type': 'application/json' },
+    tags: { endpoint: 'aggregate' },
+  });
+
+  if (res.status !== 200) {
+    aggErrors.add(1);
+    httpErrors.add(1);
+    return;
+  }
+
+  try {
+    const body = JSON.parse(res.body);
+    if (body.error) {
+      aggErrors.add(1);
+    } else if (body.duration_ms !== undefined) {
+      const elapsedMs = body.duration_ms;
+      trend.add(elapsedMs);
+      if (binSize === 15) aggHistoric15mLatencyMs.add(elapsedMs);
+      if (binSize === 30) aggHistoric30mLatencyMs.add(elapsedMs);
+    }
+  } catch (e) {
+    aggErrors.add(1);
+  }
+
+  sleep(AGG_WAIT_MS / 1000);
+}
+
 // ---------------------------------------------------------------------------
-// Scenario 2 — aggregate() OHLC candles
+// Scenario 1 — find all 1-min candles for one EQ ID
 // ---------------------------------------------------------------------------
-export function aggScenario() {
-  const symbol         = randomChoice(SYMBOL_POOL);
-  const binSize        = randomChoice([5, 15, 30]);
-  const [startTs, endTs] = pickRandomWindow(AGG_MIN_TS, AGG_MAX_TS, binSize);
+export function find1minEqScenario() {
+  const symbol = randomChoice(SYMBOL_POOL);
 
   const payload = {
+    collection: ONED_EQ_COLLECTION,
+    filter: {
+      id: symbol,
+      ts: {
+        $gte: FIND_START_TS,
+        $lt: FIND_END_TS,
+      },
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+    },
+    sort: {
+      ts: 1,
+    },
+  };
+
+  runFind(payload, find1minEqLatencyMs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 2 — aggregate 5-min OHLC candles for one EQ ID
+// ---------------------------------------------------------------------------
+export function agg5minEqScenario() {
+  const symbol = randomChoice(SYMBOL_POOL);
+  const payload = {
+    collection: ONED_EQ_COLLECTION,
     pipeline: [
       {
         $match: {
-          t: symbol,
+          id: symbol,
+          ts: {
+            $gte: FIND_START_TS,
+            $lt: FIND_END_TS,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$ts',
+              unit: 'minute',
+              binSize: 5,
+            },
+          },
+          o: { $first: '$o' },
+          h: { $max: '$h' },
+          l: { $min: '$l' },
+          c: { $last: '$c' },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ],
+  };
+
+  runAggregate(payload, agg5minEqLatencyMs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 3 — find all 1-min candles for one FNO ID for a date
+// ---------------------------------------------------------------------------
+export function find1minHistoricScenario() {
+  const fnoId = randomChoice(FNO_ID_POOL);
+  const payload = {
+    collection: HISTORIC_FNO_COLLECTION,
+    filter: {
+      id: fnoId,
+      ts: {
+        $gte: HISTORIC_DATE_START_TS,
+        $lt: HISTORIC_DATE_END_TS,
+      },
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+    },
+    sort: {
+      ts: 1,
+    },
+  };
+
+  runFind(payload, find1minHistoricLatencyMs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4 — find 3 days of 1-min candles for one ID from historic-eq
+// ---------------------------------------------------------------------------
+export function findHistoricScenario() {
+  const symbol = randomChoice(SYMBOL_POOL);
+  const payload = {
+    collection: HISTORIC_EQ_COLLECTION,
+    filter: {
+      id: symbol,
+      ts: {
+        $gte: HISTORIC_3D_START_TS,
+        $lt: HISTORIC_3D_END_TS,
+      },
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+    },
+    sort: {
+      ts: 1,
+    },
+  };
+
+  runFind(payload, findHistoricLatencyMs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 5 — aggregate historic-eq into random 15/30-min OHLC bins
+// ---------------------------------------------------------------------------
+export function aggHistoricScenario() {
+  const symbol = randomChoice(SYMBOL_POOL);
+  const binSize = randomChoice([15, 30]);
+  const [startTs, endTs] = pickRandomWindow(AGG_MIN_TS, AGG_MAX_TS, binSize);
+
+  const payload = {
+    collection: HISTORIC_EQ_COLLECTION,
+    pipeline: [
+      {
+        $match: {
+          id: symbol,
           ts: {
             $gte: startTs,
             $lt: endTs,
@@ -218,31 +393,5 @@ export function aggScenario() {
     ],
   };
 
-  const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
-    headers: { 'Content-Type': 'application/json' },
-    tags: { endpoint: 'aggregate' },
-  });
-
-  if (res.status !== 200) {
-    aggErrors.add(1);
-    httpErrors.add(1);
-    return;
-  }
-
-  try {
-    const body = JSON.parse(res.body);
-    if (body.error) {
-      aggErrors.add(1);
-    } else if (body.duration_ms !== undefined) {
-      const elapsedMs = body.duration_ms;
-      aggLatencyMs.add(elapsedMs);
-      if      (binSize ===  5) aggLatency5m.add(elapsedMs);
-      else if (binSize === 15) aggLatency15m.add(elapsedMs);
-      else                     aggLatency30m.add(elapsedMs);
-    }
-  } catch (e) {
-    aggErrors.add(1);
-  }
-
-  sleep(AGG_WAIT_MS / 1000);
+  runAggregate(payload, aggHistoricLatencyMs, binSize);
 }
