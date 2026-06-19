@@ -24,7 +24,7 @@
  *   TOTAL_RPS          — total req/sec across scenarios (default: 100)
  *   PREALLOCATED_VUS   — pre-allocated VUs per scenario (default: 50)
  *   MAX_VUS            — max VUs per scenario          (default: 500)
- *   RATE_STEP          — req/sec added per step        (default: 1)
+ *   RATE_STEP          — minimum req/sec added per step (default: 1)
  *   RATE_STEP_SECONDS  — seconds per rate step         (default: 5)
  *   MINUTES            — duration of each scenario  (default: 2)
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
@@ -87,16 +87,27 @@ function buildRateStages(targetRate, stepRate, stepSeconds) {
   const safeStep = Math.max(stepRate, 1);
   const safeSeconds = Math.max(stepSeconds, 1);
   const safeTarget = Math.max(targetRate, 1);
+  const totalSeconds = Math.max(Math.floor(MINUTES * 60), safeSeconds);
+  const maxSteps = Math.max(1, Math.floor(totalSeconds / safeSeconds));
+  const stepIncrement = Math.max(safeStep, Math.ceil(safeTarget / maxSteps));
+  let currentTarget = 0;
+  let elapsed = 0;
 
-  for (let target = safeStep; target <= safeTarget; target += safeStep) {
-    stages.push({ duration: `${safeSeconds}s`, target: Math.min(target, safeTarget) });
+  while (currentTarget < safeTarget && elapsed+safeSeconds <= totalSeconds) {
+    currentTarget = Math.min(safeTarget, currentTarget + stepIncrement);
+    stages.push({ duration: `${safeSeconds}s`, target: currentTarget });
+    elapsed += safeSeconds;
   }
 
-  if (stages.length === 0 || stages[stages.length - 1].target !== safeTarget) {
+  const remainingSeconds = totalSeconds - elapsed;
+  if (remainingSeconds > 0) {
+    stages.push({ duration: `${remainingSeconds}s`, target: safeTarget });
+  }
+
+  if (stages.length === 0) {
     stages.push({ duration: `${safeSeconds}s`, target: safeTarget });
   }
 
-  stages.push({ duration: `${MINUTES}m`, target: safeTarget });
   return stages;
 }
 
