@@ -22,29 +22,35 @@ fi
 echo "✅ Go wrapper is ready"
 
 # Parse arguments
-USERS=${1:-20}
+TOTAL_RPS=${1:-400}
 MINUTES=${2:-2}
-FIND_WAIT_MS=${3:-1}
-AGG_WAIT_MS=${4:-10}
-AGG_MIN_TS=${5:-2024-01-01T00:00:00Z}
-AGG_MAX_TS=${6:-2026-06-11T00:00:00Z}
+RATE_STEP=${3:-1}
+RATE_STEP_SECONDS=${4:-5}
+PREALLOCATED_VUS=${5:-50}
+MAX_VUS=${6:-500}
+AGG_MIN_TS=${7:-2026-05-07T00:00:00Z}
+AGG_MAX_TS=${8:-2026-06-02T00:00:00Z}
 
 echo ""
 echo "📊 Running k6 benchmark with settings:"
-echo "   USERS=$USERS"
+echo "   TOTAL_RPS=$TOTAL_RPS"
 echo "   MINUTES=$MINUTES"
-echo "   FIND_WAIT_MS=$FIND_WAIT_MS"
-echo "   AGG_WAIT_MS=$AGG_WAIT_MS"
+echo "   RATE_STEP=$RATE_STEP"
+echo "   RATE_STEP_SECONDS=$RATE_STEP_SECONDS"
+echo "   PREALLOCATED_VUS=$PREALLOCATED_VUS"
+echo "   MAX_VUS=$MAX_VUS"
 echo "   AGG_MIN_TS=$AGG_MIN_TS"
 echo "   AGG_MAX_TS=$AGG_MAX_TS"
 echo ""
 
 k6 run \
     --env API_BASE_URL=http://localhost:9000 \
-    --env USERS=$USERS \
+    --env TOTAL_RPS=$TOTAL_RPS \
     --env MINUTES=$MINUTES \
-    --env FIND_WAIT_MS=$FIND_WAIT_MS \
-    --env AGG_WAIT_MS=$AGG_WAIT_MS \
+    --env RATE_STEP=$RATE_STEP \
+    --env RATE_STEP_SECONDS=$RATE_STEP_SECONDS \
+    --env PREALLOCATED_VUS=$PREALLOCATED_VUS \
+    --env MAX_VUS=$MAX_VUS \
     --env AGG_MIN_TS=$AGG_MIN_TS \
     --env AGG_MAX_TS=$AGG_MAX_TS \
     benchmark_k6_http.js
