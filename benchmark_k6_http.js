@@ -2,11 +2,11 @@
  * k6 benchmark using HTTP wrapper for MongoDB queries.
  *
  * 5 query types in parallel:
- *   1. find_1min_eq          — find all 1-min candles for one EQ ID for a date from oned-eq
- *   2. agg_5min_eq           — aggregate 5-min OHLC candles for one EQ ID
- *   3. find_1min_historic_eq — find all 1-min candles for one EQ ID for a date from historic-eq
- *   4. find_historic         — find 3 days of 1-min candles for one ID from historic-eq
- *   5. agg_historic          — aggregate historic-eq into random 15/30-min OHLC bins
+ *   1. oned_eq_1m_find          — find all 1-min candles for one EQ ID for a date from oned-eq
+ *   2. oned_eq_5m_agg           — aggregate 5-min OHLC candles for one EQ ID
+ *   3. historic_eq_3d_5m_agg    — aggregate 3 days of historic-eq into 5-min OHLC bins
+ *   4. historic_eq_3d_1m_find   — find 3 days of 1-min candles for one ID from historic-eq
+ *   5. historic_eq_15_30m_agg   — aggregate historic-eq into random 15/30-min OHLC bins
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -74,13 +74,11 @@ const SYMBOL_POOL = [
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
 // ---------------------------------------------------------------------------
-const find1minEqLatencyMs       = new Trend('find_1min_eq_latency_ms', true);
-const agg5minEqLatencyMs        = new Trend('agg_5min_eq_latency_ms', true);
-const find1minHistoricLatencyMs = new Trend('find_1min_historic_latency_ms', true);
-const findHistoricLatencyMs     = new Trend('find_historic_latency_ms', true);
-const aggHistoricLatencyMs      = new Trend('agg_historic_latency_ms', true);
-const aggHistoric15mLatencyMs   = new Trend('agg_historic_15m_latency_ms', true);
-const aggHistoric30mLatencyMs   = new Trend('agg_historic_30m_latency_ms', true);
+const find1minEqLatencyMs       = new Trend('oned_eq_1m_find_latency_ms', true);
+const agg5minEqLatencyMs        = new Trend('oned_eq_5m_agg_latency_ms', true);
+const aggHistoric3d5mLatencyMs  = new Trend('historic_eq_3d_5m_agg_latency_ms', true);
+const findHistoricLatencyMs     = new Trend('historic_eq_3d_1m_find_latency_ms', true);
+const aggHistoricLatencyMs      = new Trend('historic_eq_15_30m_agg_latency_ms', true);
 const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
@@ -109,50 +107,50 @@ const steppedStages = [...rampStages, { duration: `${MINUTES}m`, target: USERS }
 // ---------------------------------------------------------------------------
 export const options = {
   scenarios: {
-    find_1min_eq: {
+    oned_eq_1m_find: {
       executor:  'ramping-vus',
       startVUs:  0,
       stages:    steppedStages,
       gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'find1minEqScenario',
-      tags:      { scenario: 'find_1min_eq' },
+      tags:      { scenario: 'oned_eq_1m_find' },
     },
-    agg_5min_eq: {
+    oned_eq_5m_agg: {
       executor:  'ramping-vus',
       startVUs:  0,
       stages:    steppedStages,
       gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'agg5minEqScenario',
-      tags:      { scenario: 'agg_5min_eq' },
+      tags:      { scenario: 'oned_eq_5m_agg' },
     },
-    find_1min_historic_eq: {
+    historic_eq_3d_5m_agg: {
       executor:  'ramping-vus',
       startVUs:  0,
       stages:    steppedStages,
       gracefulRampDown: '0s',
       startTime: '0s',
-      exec:      'find1minHistoricEqScenario',
-      tags:      { scenario: 'find_1min_historic_eq' },
+      exec:      'aggHistoric3d5mScenario',
+      tags:      { scenario: 'historic_eq_3d_5m_agg' },
     },
-    find_historic: {
+    historic_eq_3d_1m_find: {
       executor:  'ramping-vus',
       startVUs:  0,
       stages:    steppedStages,
       gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'findHistoricScenario',
-      tags:      { scenario: 'find_historic' },
+      tags:      { scenario: 'historic_eq_3d_1m_find' },
     },
-    agg_historic: {
+    historic_eq_15_30m_agg: {
       executor:  'ramping-vus',
       startVUs:  0,
       stages:    steppedStages,
       gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'aggHistoricScenario',
-      tags:      { scenario: 'agg_historic' },
+      tags:      { scenario: 'historic_eq_15_30m_agg' },
     },
   },
   // Surface all custom Trends in the end-of-test summary
@@ -225,7 +223,7 @@ function runFind(payload, trend) {
   sleep(FIND_WAIT_MS / 1000);
 }
 
-function runAggregate(payload, trend, binSize) {
+function runAggregate(payload, trend) {
   const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'aggregate' },
@@ -244,8 +242,6 @@ function runAggregate(payload, trend, binSize) {
     } else if (body.duration_ms !== undefined) {
       const elapsedMs = body.duration_ms;
       trend.add(elapsedMs);
-      if (binSize === 15) aggHistoric15mLatencyMs.add(elapsedMs);
-      if (binSize === 30) aggHistoric30mLatencyMs.add(elapsedMs);
     }
   } catch (e) {
     aggErrors.add(1);
@@ -323,29 +319,44 @@ export function agg5minEqScenario() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 3 — find all 1-min candles for one EQ ID for a date from historic-eq
+// Scenario 3 — aggregate 3 days of historic-eq into 5-min OHLC bins
 // ---------------------------------------------------------------------------
-export function find1minHistoricEqScenario() {
+export function aggHistoric3d5mScenario() {
   const symbol = randomChoice(SYMBOL_POOL);
   const payload = {
     collection: HISTORIC_EQ_COLLECTION,
-    filter: {
-      id: symbol,
-      ts: {
-        $gte: HISTORIC_DATE_START_TS,
-        $lt: HISTORIC_DATE_END_TS,
+    pipeline: [
+      {
+        $match: {
+          id: symbol,
+          ts: {
+            $gte: HISTORIC_3D_START_TS,
+            $lt: HISTORIC_3D_END_TS,
+          },
+        },
       },
-    },
-    projection: {
-      _id: 0,
-      id: 0,
-    },
-    sort: {
-      ts: 1,
-    },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$ts',
+              unit: 'minute',
+              binSize: 5,
+            },
+          },
+          o: { $first: '$o' },
+          h: { $max: '$h' },
+          l: { $min: '$l' },
+          c: { $last: '$c' },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ],
   };
 
-  runFind(payload, find1minHistoricLatencyMs);
+  runAggregate(payload, aggHistoric3d5mLatencyMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -415,5 +426,5 @@ export function aggHistoricScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricLatencyMs, binSize);
+  runAggregate(payload, aggHistoricLatencyMs);
 }
