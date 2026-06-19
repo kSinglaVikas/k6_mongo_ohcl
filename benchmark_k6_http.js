@@ -2,11 +2,11 @@
  * k6 benchmark using HTTP wrapper for MongoDB queries.
  *
  * 5 query types in parallel:
- *   1. find_1min_eq         — find all 1-min candles for one EQ ID
- *   2. agg_5min_eq          — aggregate 5-min OHLC candles for one EQ ID
- *   3. find_1min_historic   — find all 1-min candles for one FNO ID for a date
- *   4. find_historic        — find 3 days of 1-min candles for one ID from historic-eq
- *   5. agg_historic         — aggregate historic-eq into random 15/30-min OHLC bins
+ *   1. find_1min_eq          — find all 1-min candles for one EQ ID for a date from oned-eq
+ *   2. agg_5min_eq           — aggregate 5-min OHLC candles for one EQ ID
+ *   3. find_1min_historic_eq — find all 1-min candles for one EQ ID for a date from historic-eq
+ *   4. find_historic         — find 3 days of 1-min candles for one ID from historic-eq
+ *   5. agg_historic          — aggregate historic-eq into random 15/30-min OHLC bins
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -22,12 +22,13 @@
  * Tune via env vars (all optional):
  *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:8080)
  *   USERS              — VUs per scenario           (default: 20)
+ *   USER_STEP          — VUs added per step         (default: 1)
+ *   USER_STEP_SECONDS  — seconds per user step      (default: 5)
  *   MINUTES            — duration of each scenario  (default: 2)
  *   FIND_WAIT_MS       — sleep after each find (ms) (default: 1)
  *   AGG_WAIT_MS        — sleep after each agg  (ms) (default: 10)
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
  *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
- *   HISTORIC_FNO_COLLECTION — historic-fno collection (default: historic-fno)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
  *   AGG_MAX_TS         — newest ts for agg window   (default: 2026-06-11T00:00:00Z)
  */
@@ -41,12 +42,13 @@ import { sleep } from 'k6';
 // ---------------------------------------------------------------------------
 const API_BASE_URL = __ENV.API_BASE_URL  || 'http://localhost:9000';
 const USERS        = parseInt(__ENV.USERS   || '20');
+const USER_STEP    = parseInt(__ENV.USER_STEP || '1');
+const USER_STEP_SECONDS = parseInt(__ENV.USER_STEP_SECONDS || '5');
 const MINUTES      = parseInt(__ENV.MINUTES || '2');
 const FIND_WAIT_MS = parseFloat(__ENV.FIND_WAIT_MS || '1');
 const AGG_WAIT_MS  = parseFloat(__ENV.AGG_WAIT_MS  || '10');
 const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
-const HISTORIC_FNO_COLLECTION = __ENV.HISTORIC_FNO_COLLECTION || 'historic-fno';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
 const FIND_START_TS = '2026-06-11T09:15:00Z';
@@ -69,10 +71,6 @@ const SYMBOL_POOL = [
   'BIKAJI.NS', 'WOCKPHARMA.NS', 'DATAPATTNS.NS', 'IOC.NS', 'WIPRO.BO',
 ];
 
-const FNO_ID_POOL = [
-  'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX',
-];
-
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
 // ---------------------------------------------------------------------------
@@ -87,47 +85,71 @@ const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
 
+function buildStepStages(maxVUs, stepVUs, stepSeconds) {
+  const stages = [];
+  const safeStep = Math.max(stepVUs, 1);
+  const safeSeconds = Math.max(stepSeconds, 1);
+
+  for (let target = safeStep; target <= maxVUs; target += safeStep) {
+    stages.push({ duration: `${safeSeconds}s`, target: Math.min(target, maxVUs) });
+  }
+
+  if (stages.length === 0 || stages[stages.length - 1].target !== maxVUs) {
+    stages.push({ duration: `${safeSeconds}s`, target: maxVUs });
+  }
+
+  return stages;
+}
+
+const rampStages = buildStepStages(USERS, USER_STEP, USER_STEP_SECONDS);
+const steppedStages = [...rampStages, { duration: `${MINUTES}m`, target: USERS }];
+
 // ---------------------------------------------------------------------------
 // k6 options — 5 scenarios running in parallel
 // ---------------------------------------------------------------------------
 export const options = {
   scenarios: {
     find_1min_eq: {
-      executor:  'constant-vus',
-      vus:       USERS,
-      duration:  `${MINUTES}m`,
+      executor:  'ramping-vus',
+      startVUs:  0,
+      stages:    steppedStages,
+      gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'find1minEqScenario',
       tags:      { scenario: 'find_1min_eq' },
     },
     agg_5min_eq: {
-      executor:  'constant-vus',
-      vus:       USERS,
-      duration:  `${MINUTES}m`,
+      executor:  'ramping-vus',
+      startVUs:  0,
+      stages:    steppedStages,
+      gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'agg5minEqScenario',
       tags:      { scenario: 'agg_5min_eq' },
     },
-    find_1min_historic: {
-      executor:  'constant-vus',
-      vus:       USERS,
-      duration:  `${MINUTES}m`,
+    find_1min_historic_eq: {
+      executor:  'ramping-vus',
+      startVUs:  0,
+      stages:    steppedStages,
+      gracefulRampDown: '0s',
       startTime: '0s',
-      exec:      'find1minHistoricScenario',
-      tags:      { scenario: 'find_1min_historic' },
+      exec:      'find1minHistoricEqScenario',
+      tags:      { scenario: 'find_1min_historic_eq' },
     },
     find_historic: {
-      executor:  'constant-vus',
-      vus:       USERS,
-      duration:  `${MINUTES}m`,
+      executor:  'ramping-vus',
+      startVUs:  0,
+      stages:    steppedStages,
+      gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'findHistoricScenario',
       tags:      { scenario: 'find_historic' },
     },
     agg_historic: {
-      executor:  'constant-vus',
-      vus:       USERS,
-      duration:  `${MINUTES}m`,
+      executor:  'ramping-vus',
+      startVUs:  0,
+      stages:    steppedStages,
+      gracefulRampDown: '0s',
       startTime: '0s',
       exec:      'aggHistoricScenario',
       tags:      { scenario: 'agg_historic' },
@@ -301,14 +323,14 @@ export function agg5minEqScenario() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 3 — find all 1-min candles for one FNO ID for a date
+// Scenario 3 — find all 1-min candles for one EQ ID for a date from historic-eq
 // ---------------------------------------------------------------------------
-export function find1minHistoricScenario() {
-  const fnoId = randomChoice(FNO_ID_POOL);
+export function find1minHistoricEqScenario() {
+  const symbol = randomChoice(SYMBOL_POOL);
   const payload = {
-    collection: HISTORIC_FNO_COLLECTION,
+    collection: HISTORIC_EQ_COLLECTION,
     filter: {
-      id: fnoId,
+      id: symbol,
       ts: {
         $gte: HISTORIC_DATE_START_TS,
         $lt: HISTORIC_DATE_END_TS,
