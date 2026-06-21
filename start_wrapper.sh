@@ -31,6 +31,9 @@ if [ -z "$MONGO_URI" ]; then
     exit 1
 fi
 
+# Show target host without exposing credentials from the URI.
+MONGO_HOST=$(echo "$MONGO_URI" | sed -E 's#^[a-zA-Z0-9+.-]+://##; s#^[^@]*@##; s#/.*$##; s#\?.*$##')
+
 echo "📦 Building Go wrapper..."
 if [ ! -f "go.sum" ]; then
     go mod tidy
@@ -41,6 +44,7 @@ echo "✅ Go wrapper built"
 echo ""
 echo "🚀 Starting Go wrapper service on http://localhost:9000"
 echo "   DB_NAME=${DB_NAME:-ohcl_data}"
+echo "   MONGO_HOST=${MONGO_HOST:-<unknown>}"
 echo ""
 echo "⚠️  To run the benchmark, open a new terminal and run:"
 echo "   cd $DIR"
