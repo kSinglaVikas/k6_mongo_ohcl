@@ -32,6 +32,7 @@ fi
 MONGO_HOST=$(echo "$MONGO_URI" | sed -E 's#^[a-zA-Z0-9+.-]+://##; s#^[^@]*@##; s#/.*$##; s#\?.*$##')
 
 mkdir -p .pids .logs .nginx/logs
+mkdir -p .nginx/tmp/client_body .nginx/tmp/proxy .nginx/tmp/fastcgi .nginx/tmp/uwsgi .nginx/tmp/scgi
 
 echo "📦 Building Go wrapper..."
 if [ ! -f "go.sum" ]; then
