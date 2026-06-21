@@ -131,9 +131,12 @@ const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
 const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.05));
 const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.15));
+const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
+const FIND_PHASE_START = '0s';
+const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
 
 // ---------------------------------------------------------------------------
-// k6 options — 5 scenarios running in parallel
+// k6 options — 2-phase execution (find first, then agg)
 // ---------------------------------------------------------------------------
 export const options = {
   scenarios: {
@@ -144,7 +147,7 @@ export const options = {
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_ONED_EQ_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
-      startTime: '0s',
+      startTime: FIND_PHASE_START,
       exec:      'find1minEqScenario',
       tags:      { scenario: 'oned_eq_1m_find' },
     },
@@ -155,7 +158,7 @@ export const options = {
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_ONED_EQ_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
-      startTime: '0s',
+      startTime: AGG_PHASE_START,
       exec:      'agg5minEqScenario',
       tags:      { scenario: 'oned_eq_5m_agg' },
     },
@@ -166,7 +169,7 @@ export const options = {
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_HIST_EQ_3D_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
-      startTime: '0s',
+      startTime: AGG_PHASE_START,
       exec:      'aggHistoric3d5mScenario',
       tags:      { scenario: 'historic_eq_3d_5m_agg' },
     },
@@ -177,7 +180,7 @@ export const options = {
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_HIST_EQ_3D_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
-      startTime: '0s',
+      startTime: FIND_PHASE_START,
       exec:      'findHistoricScenario',
       tags:      { scenario: 'historic_eq_3d_1m_find' },
     },
@@ -188,7 +191,7 @@ export const options = {
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_HIST_EQ_15_30M_AGG, RATE_STEP, RATE_STEP_SECONDS),
-      startTime: '0s',
+      startTime: AGG_PHASE_START,
       exec:      'aggHistoricScenario',
       tags:      { scenario: 'historic_eq_15_30m_agg' },
     },

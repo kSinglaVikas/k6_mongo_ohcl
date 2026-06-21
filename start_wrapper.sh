@@ -6,6 +6,8 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
+source .env 2>/dev/null || true
+
 # Check prerequisites
 if ! command -v go &> /dev/null; then
     echo "❌ Go is not installed. Install from https://golang.org/dl/"
