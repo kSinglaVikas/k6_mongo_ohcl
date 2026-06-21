@@ -127,10 +127,10 @@ function buildRateStages(targetRate, stepRate, stepSeconds) {
 }
 
 const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.50));
-const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
+const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.70));
 const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
-const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.05));
-const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.15));
+const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.30));
+const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.30));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
 const FIND_PHASE_START = '0s';
 const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
