@@ -37,6 +37,7 @@
 
 import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
+import { SharedArray } from 'k6/data';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -74,20 +75,21 @@ function parseSymbolsCsv(content) {
     .filter((line) => line.length > 0);
 
   if (symbols.length === 0) {
-    throw new Error('symbols.csv is empty; provide at least one symbol');
+    throw new Error('symbol CSV is empty; provide at least one symbol');
   }
 
   return symbols;
 }
 
-const SYMBOL_POOL_EQ       = parseSymbolsCsv(open('./symbols_eq.csv'));
-const SYMBOL_POOL_HISTORIC = parseSymbolsCsv(open('./symbols_historic.csv'));
-const SYMBOL_POOL_FNO      = parseSymbolsCsv(open('./symbols_fno.csv'));
-
-// Print the symbol pools lengths for verification
-console.log(`Loaded ${SYMBOL_POOL_EQ.length} symbols for oned-eq`);
-console.log(`Loaded ${SYMBOL_POOL_HISTORIC.length} symbols for historic-eq`);
-console.log(`Loaded ${SYMBOL_POOL_FNO.length} symbols for oned-fno`);
+const SYMBOL_POOL_EQ = new SharedArray('symbols_eq', function () {
+  return parseSymbolsCsv(open('./symbols_eq.csv'));
+});
+const SYMBOL_POOL_HISTORIC = new SharedArray('symbols_historic', function () {
+  return parseSymbolsCsv(open('./symbols_historic.csv'));
+});
+const SYMBOL_POOL_FNO = new SharedArray('symbols_fno', function () {
+  return parseSymbolsCsv(open('./symbols_fno.csv'));
+});
 
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
@@ -108,6 +110,14 @@ const findFnoCountDocs          = new Trend('find_oned_fno_1m_count', false);
 const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
 const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
 const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
+
+// Zero-result counters (count == 0)
+const find1minEqZeroCount       = new Counter('find_oned_eq_1m_zero_count');
+const findHistoricZeroCount     = new Counter('find_historic_eq_3d_1m_zero_count');
+const findFnoZeroCount          = new Counter('find_oned_fno_1m_zero_count');
+const agg5minEqZeroCount        = new Counter('agg_oned_eq_5m_zero_count');
+const aggHistoric3d5mZeroCount  = new Counter('agg_historic_eq_3d_5m_zero_count');
+const aggHistoricZeroCount      = new Counter('agg_historic_eq_15_30m_zero_count');
 
 const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
@@ -225,6 +235,9 @@ export function setup() {
     throw new Error(`API health check failed: ${res.status}`);
   }
   console.log('API health check passed');
+  console.log(`Loaded ${SYMBOL_POOL_EQ.length} symbols for oned-eq`);
+  console.log(`Loaded ${SYMBOL_POOL_HISTORIC.length} symbols for historic-eq`);
+  console.log(`Loaded ${SYMBOL_POOL_FNO.length} symbols for oned-fno`);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +269,7 @@ function pickRandomWindow(minIso, maxIso, binSizeMinutes) {
 // ---------------------------------------------------------------------------
 // Shared execution helpers
 // ---------------------------------------------------------------------------
-function runFind(payload, latencyTrend, countTrend) {
+function runFind(payload, latencyTrend, countTrend, zeroCountCounter) {
   const res = http.post(`${API_BASE_URL}/find`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'find' },
@@ -276,6 +289,9 @@ function runFind(payload, latencyTrend, countTrend) {
       latencyTrend.add(body.duration_ms);
       if (body.count !== undefined) {
         countTrend.add(body.count);
+        if (body.count === 0) {
+          zeroCountCounter.add(1);
+        }
       }
     }
   } catch (e) {
@@ -283,7 +299,7 @@ function runFind(payload, latencyTrend, countTrend) {
   }
 }
 
-function runAggregate(payload, latencyTrend, countTrend) {
+function runAggregate(payload, latencyTrend, countTrend, zeroCountCounter) {
   const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'aggregate' },
@@ -304,6 +320,9 @@ function runAggregate(payload, latencyTrend, countTrend) {
       latencyTrend.add(elapsedMs);
       if (body.count !== undefined) {
         countTrend.add(body.count);
+        if (body.count === 0) {
+          zeroCountCounter.add(1);
+        }
       }
     }
   } catch (e) {
@@ -335,7 +354,7 @@ export function find1minEqScenario() {
     },
   };
 
-  runFind(payload, find1minEqLatencyMs, find1minEqCountDocs);
+  runFind(payload, find1minEqLatencyMs, find1minEqCountDocs, find1minEqZeroCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,7 +395,7 @@ export function agg5minEqScenario() {
     ],
   };
 
-  runAggregate(payload, agg5minEqLatencyMs, agg5minEqCountDocs);
+  runAggregate(payload, agg5minEqLatencyMs, agg5minEqCountDocs, agg5minEqZeroCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +436,7 @@ export function aggHistoric3d5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoric3d5mLatencyMs, aggHistoric3d5mCountDocs);
+  runAggregate(payload, aggHistoric3d5mLatencyMs, aggHistoric3d5mCountDocs, aggHistoric3d5mZeroCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +462,7 @@ export function findHistoricScenario() {
     },
   };
 
-  runFind(payload, findHistoricLatencyMs, findHistoricCountDocs);
+  runFind(payload, findHistoricLatencyMs, findHistoricCountDocs, findHistoricZeroCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +506,7 @@ export function aggHistoricScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricLatencyMs, aggHistoricCountDocs);
+  runAggregate(payload, aggHistoricLatencyMs, aggHistoricCountDocs, aggHistoricZeroCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -514,5 +533,5 @@ export function findFnoScenario() {
     },
   };
 
-  runFind(payload, findFnoLatencyMs, findFnoCountDocs);
+  runFind(payload, findFnoLatencyMs, findFnoCountDocs, findFnoZeroCount);
 }
