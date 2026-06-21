@@ -59,7 +59,7 @@ mongosh "$MONGO_URI" --quiet --eval '
 # Pull top 400 from historic-eq
 mongosh "$MONGO_URI" --quiet --eval '
   db.getSiblingDB("charts").getCollection("historic-eq").aggregate([
-    { $match: { ts: { $gte: new Date("2023-03-20T00:00:00Z"), $lt: new Date("2026-03-30T00:00:00Z") } } },
+    { $match: { ts: { $gte: new Date("2023-03-20T00:00:00Z"), $lt: new Date("2026-03-24T00:00:00Z") } } },
     { $group: { _id: "$id", cnt: { $count: {} } } },
     { $sort: { cnt: -1 } },
     { $limit: 400 },
