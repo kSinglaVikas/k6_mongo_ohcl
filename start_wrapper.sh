@@ -6,7 +6,11 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
-source .env 2>/dev/null || true
+if [ -f ".env" ]; then
+    set -a
+    source .env
+    set +a
+fi
 
 # Check prerequisites
 if ! command -v go &> /dev/null; then

@@ -97,33 +97,21 @@ const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
 
-function buildRateStages(targetRate, stepRate, stepSeconds) {
-  const stages = [];
-  const safeStep = Math.max(stepRate, 1);
-  const safeSeconds = Math.max(stepSeconds, 1);
+function buildRateStages(targetRate) {
   const safeTarget = Math.max(targetRate, 1);
-  const totalSeconds = Math.max(Math.floor(MINUTES * 60), safeSeconds);
-  const maxSteps = Math.max(1, Math.floor(totalSeconds / safeSeconds));
-  const stepIncrement = Math.max(safeStep, Math.ceil(safeTarget / maxSteps));
-  let currentTarget = 0;
-  let elapsed = 0;
+  const totalSeconds = Math.max(Math.floor(MINUTES * 60), 1);
 
-  while (currentTarget < safeTarget && elapsed+safeSeconds <= totalSeconds) {
-    currentTarget = Math.min(safeTarget, currentTarget + stepIncrement);
-    stages.push({ duration: `${safeSeconds}s`, target: currentTarget });
-    elapsed += safeSeconds;
+  if (totalSeconds === 1) {
+    return [{ duration: '1s', target: safeTarget }];
   }
 
-  const remainingSeconds = totalSeconds - elapsed;
-  if (remainingSeconds > 0) {
-    stages.push({ duration: `${remainingSeconds}s`, target: safeTarget });
-  }
+  const rampSeconds = Math.max(1, Math.floor(totalSeconds / 2));
+  const holdSeconds = totalSeconds - rampSeconds;
 
-  if (stages.length === 0) {
-    stages.push({ duration: `${safeSeconds}s`, target: safeTarget });
-  }
-
-  return stages;
+  return [
+    { duration: `${rampSeconds}s`, target: safeTarget },
+    { duration: `${holdSeconds}s`, target: safeTarget },
+  ];
 }
 
 const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.50));
@@ -146,7 +134,7 @@ export const options = {
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_ONED_EQ_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
+      stages:    buildRateStages(RATE_ONED_EQ_1M_FIND),
       startTime: FIND_PHASE_START,
       exec:      'find1minEqScenario',
       tags:      { scenario: 'oned_eq_1m_find' },
@@ -157,7 +145,7 @@ export const options = {
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_ONED_EQ_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
+      stages:    buildRateStages(RATE_ONED_EQ_5M_AGG),
       startTime: AGG_PHASE_START,
       exec:      'agg5minEqScenario',
       tags:      { scenario: 'oned_eq_5m_agg' },
@@ -168,7 +156,7 @@ export const options = {
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_3D_5M_AGG, RATE_STEP, RATE_STEP_SECONDS),
+      stages:    buildRateStages(RATE_HIST_EQ_3D_5M_AGG),
       startTime: AGG_PHASE_START,
       exec:      'aggHistoric3d5mScenario',
       tags:      { scenario: 'historic_eq_3d_5m_agg' },
@@ -179,7 +167,7 @@ export const options = {
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_3D_1M_FIND, RATE_STEP, RATE_STEP_SECONDS),
+      stages:    buildRateStages(RATE_HIST_EQ_3D_1M_FIND),
       startTime: FIND_PHASE_START,
       exec:      'findHistoricScenario',
       tags:      { scenario: 'historic_eq_3d_1m_find' },
@@ -190,7 +178,7 @@ export const options = {
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_15_30M_AGG, RATE_STEP, RATE_STEP_SECONDS),
+      stages:    buildRateStages(RATE_HIST_EQ_15_30M_AGG),
       startTime: AGG_PHASE_START,
       exec:      'aggHistoricScenario',
       tags:      { scenario: 'historic_eq_15_30m_agg' },

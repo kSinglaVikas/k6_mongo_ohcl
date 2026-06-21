@@ -3,10 +3,14 @@
 
 set -e
 
-source .env 2>/dev/null || true
-
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
+
+if [ -f ".env" ]; then
+    set -a
+    source .env
+    set +a
+fi
 
 API_BASE_URL=${API_BASE_URL:-http://localhost:9000}
 
