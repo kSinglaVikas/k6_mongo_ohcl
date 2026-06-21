@@ -39,3 +39,7 @@ go.mod.backup
 
 # Input & Out Files
 *.csv
+
+# NGINX Worker
+nginx.pid
+*.pid
