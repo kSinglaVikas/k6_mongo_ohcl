@@ -33,7 +33,22 @@ Rates are derived from `TOTAL_RPS`.
 
 ## Setup
 
-### 1. Start wrapper
+### 1. Generate symbols.csv
+
+```bash
+cd k6_mongo_ohcl
+
+source .env && mongosh "$MONGO_URI" --quiet --eval '
+  db.getSiblingDB("charts").getCollection("oned-eq").aggregate([
+    { $group: { _id: "$id", cnt: { $count: {} } } },
+    { $sort: { cnt: -1 } },
+    { $limit: 400 },
+    { $project: { cnt: 0 } }
+  ]).toArray().map(d => d._id).join("\n")
+' > symbols.csv
+```
+
+### 2. Start wrapper
 
 ```bash
 cd k6_mongo_ohcl
@@ -50,7 +65,7 @@ DEBUG=false \
 ./mongo_wrapper
 ```
 
-### 2. Run benchmark
+### 3. Run benchmark
 
 ```bash
 cd k6_mongo_ohcl
