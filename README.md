@@ -9,7 +9,7 @@ This benchmark uses k6 plus a Go HTTP wrapper for MongoDB queries.
   - `POST /aggregate`
   - `GET /health`
 - `benchmark_k6_http.js`
-  - 5 weighted scenarios using `ramping-arrival-rate`
+  - 6 weighted scenarios using `ramping-arrival-rate`
 
 ## Current Scenario Set
 
@@ -70,7 +70,8 @@ mongosh "$MONGO_URI" --quiet --eval '
 # Pull top 400 from oned-fno
 mongosh "$MONGO_URI" --quiet --eval '
   db.getSiblingDB("charts").getCollection("oned-fno").aggregate([
-    { $match: { ts: { $gte: new Date("2026-06-02T00:00:00Z") } } },
+    { $match: { ts: { $gte: new Date("2026-06-02T03:00:00Z"), 
+                      $lte: new Date("2026-06-02T10:00:00Z") } } },
     { $group: { _id: "$id", cnt: { $count: {} } } },
     { $sort: { cnt: -1 } },
     { $limit: 400 },
@@ -96,6 +97,24 @@ DEBUG=false \
 ./mongo_wrapper
 ```
 
+### 2b. Start multi-worker wrapper (Gunicorn-like)
+
+This starts three Go wrapper workers on ports `9000-9002` and an Nginx load balancer on `9010`.
+
+```bash
+cd k6_mongo_ohcl
+
+./start_wrapper_workers.sh
+```
+
+Stop everything:
+
+```bash
+cd k6_mongo_ohcl
+
+./stop_wrapper_workers.sh
+```
+
 ### 3. Run benchmark
 
 ```bash
@@ -110,6 +129,14 @@ k6 run \
   --env RATE_STEP_SECONDS=5 \
   --env MINUTES=2 \
   benchmark_k6_http.js
+```
+
+If using multi-worker mode (`./start_wrapper_workers.sh`), run against Nginx:
+
+```bash
+cd k6_mongo_ohcl
+
+API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 ```
 
 ## Environment Variables

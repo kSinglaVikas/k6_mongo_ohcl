@@ -56,7 +56,16 @@ sudo yum install -y git
 sudo yum install -y curl
 ```
 
-### 6. Clone the Repository
+### 6. Install Nginx (for multi-worker load balancing)
+
+```bash
+sudo yum install -y nginx
+
+# Verify
+nginx -v
+```
+
+### 7. Clone the Repository
 
 ```bash
 cd ~
@@ -64,7 +73,7 @@ git clone <your-repo-url>
 cd k6_mongo_ohcl
 ```
 
-### 7. Build the MongoDB Wrapper
+### 8. Build the MongoDB Wrapper
 
 ```bash
 go build -o mongo_wrapper main.go
@@ -74,7 +83,7 @@ This automatically downloads:
 - `go.mongodb.org/mongo-driver v1.15.0`
 - Other required dependencies
 
-### 8. Set MongoDB Connection
+### 9. Set MongoDB Connection
 
 ```bash
 export MONGO_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
@@ -85,7 +94,7 @@ Or for local MongoDB:
 export MONGO_URI="mongodb://localhost:27017"
 ```
 
-### 9. Run the Wrapper (Terminal 1)
+### 10. Run the Wrapper (Terminal 1)
 
 ```bash
 PORT=9000 ./mongo_wrapper
@@ -98,7 +107,7 @@ Connected to MongoDB: mongodb+srv://... / ohcl_data (pool: 10-100)
 Starting HTTP server on :9000
 ```
 
-### 10. Run the Benchmark (Terminal 2)
+### 11. Run the Benchmark (Terminal 2)
 
 ```bash
 k6 run \

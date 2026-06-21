@@ -9,11 +9,11 @@ echo "EC2 Setup: Go + k6 + Dependencies"
 echo "================================"
 
 # Update system packages
-echo "[1/3] Updating system packages..."
+echo "[1/4] Updating system packages..."
 sudo yum update -y
 
 # Install Go 1.21+
-echo "[2/3] Installing Go..."
+echo "[2/4] Installing Go..."
 GO_VERSION="1.21.0"
 cd /tmp
 
@@ -46,12 +46,17 @@ fi
 echo "✓ Go installed successfully"
 
 # Install k6
-echo "[3/3] Installing k6..."
+echo "[3/4] Installing k6..."
 sudo yum install -y https://dl.k6.io/rpm/repo.rpm
 sudo yum install -y k6
 
 # Verify k6
 k6 version
+
+# Install nginx for multi-worker load balancing setup
+echo "[4/4] Installing nginx..."
+sudo yum install -y nginx
+nginx -v
 
 
 # Go modules will auto-download when building main.go
