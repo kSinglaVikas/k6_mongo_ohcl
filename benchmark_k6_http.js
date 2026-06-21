@@ -7,6 +7,7 @@
  *   3. historic_eq_3d_5m_agg    — aggregate 3 days of historic-eq into 5-min OHLC bins
  *   4. historic_eq_3d_1m_find   — find 3 days of 1-min candles for one ID from historic-eq
  *   5. historic_eq_15_30m_agg   — aggregate historic-eq into random 15/30-min OHLC bins
+ *   6. oned_fno_1m_find         — find all 1-min candles for one F&O ID from oned-fno
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -29,6 +30,7 @@
  *   MINUTES            — duration of each scenario  (default: 2)
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
  *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
+ *   ONED_FNO_COLLECTION     — oned-fno collection (default: oned-fno)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
  *   AGG_MAX_TS         — newest ts for agg window   (default: 2026-06-11T00:00:00Z)
  */
@@ -48,10 +50,15 @@ const RATE_STEP_SECONDS = parseInt(__ENV.RATE_STEP_SECONDS || '5');
 const MINUTES      = parseInt(__ENV.MINUTES || '2');
 const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
+const ONED_FNO_COLLECTION    = __ENV.ONED_FNO_COLLECTION    || 'oned-fno';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
 const ONED_START_TS = '2026-06-03T03:45:00Z';
 const ONED_END_TS   = '2026-06-03T10:00:00Z';
+
+// F&O date window (2026-06-02)
+const FNO_START_TS  = '2026-06-02T03:45:00Z';
+const FNO_END_TS    = '2026-06-02T10:00:00Z';
 
 // Timestamp range for aggregate random windows (supply via env for accuracy)
 const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2023-03-20T00:00:00Z';
@@ -73,7 +80,9 @@ function parseSymbolsCsv(content) {
   return symbols;
 }
 
-const SYMBOL_POOL = parseSymbolsCsv(open('./symbols.csv'));
+const SYMBOL_POOL_EQ       = parseSymbolsCsv(open('./symbols_eq.csv'));
+const SYMBOL_POOL_HISTORIC = parseSymbolsCsv(open('./symbols_historic.csv'));
+const SYMBOL_POOL_FNO      = parseSymbolsCsv(open('./symbols_fno.csv'));
 
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
@@ -82,6 +91,7 @@ const SYMBOL_POOL = parseSymbolsCsv(open('./symbols.csv'));
 // Latency trends
 const find1minEqLatencyMs       = new Trend('find_oned_eq_1m_latency_ms', true);
 const findHistoricLatencyMs     = new Trend('find_historic_eq_3d_1m_latency_ms', true);
+const findFnoLatencyMs          = new Trend('find_oned_fno_1m_latency_ms', true);
 const agg5minEqLatencyMs        = new Trend('agg_oned_eq_5m_latency_ms', true);
 const aggHistoric3d5mLatencyMs  = new Trend('agg_historic_eq_3d_5m_latency_ms', true);
 const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms', true);
@@ -89,6 +99,7 @@ const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms',
 // Count trends (documents returned)
 const find1minEqCountDocs       = new Trend('find_oned_eq_1m_count', false);
 const findHistoricCountDocs     = new Trend('find_historic_eq_3d_1m_count', false);
+const findFnoCountDocs          = new Trend('find_oned_fno_1m_count', false);
 const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
 const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
 const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
@@ -119,6 +130,7 @@ const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.70));
 const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
 const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.30));
 const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.30));
+const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(TOTAL_RPS * 0.20));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
 const FIND_PHASE_START = '0s';
 const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
@@ -182,6 +194,17 @@ export const options = {
       startTime: AGG_PHASE_START,
       exec:      'aggHistoricScenario',
       tags:      { scenario: 'historic_eq_15_30m_agg' },
+    },
+    oned_fno_1m_find: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_FNO_1M_FIND),
+      startTime: FIND_PHASE_START,
+      exec:      'findFnoScenario',
+      tags:      { scenario: 'oned_fno_1m_find' },
     },
   },
   // Surface all custom Trends in the end-of-test summary
@@ -287,7 +310,7 @@ function runAggregate(payload, latencyTrend, countTrend) {
 // Scenario 1 — find all 1-min candles for one EQ ID
 // ---------------------------------------------------------------------------
 export function find1minEqScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
 
   const payload = {
     collection: ONED_EQ_COLLECTION,
@@ -314,7 +337,7 @@ export function find1minEqScenario() {
 // Scenario 2 — aggregate 5-min OHLC candles for one EQ ID
 // ---------------------------------------------------------------------------
 export function agg5minEqScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
   const payload = {
     collection: ONED_EQ_COLLECTION,
     pipeline: [
@@ -355,7 +378,7 @@ export function agg5minEqScenario() {
 // Scenario 3 — aggregate 3 days of historic-eq into 5-min OHLC bins
 // ---------------------------------------------------------------------------
 export function aggHistoric3d5mScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
+  const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
   const payload = {
     collection: HISTORIC_EQ_COLLECTION,
     pipeline: [
@@ -396,7 +419,7 @@ export function aggHistoric3d5mScenario() {
 // Scenario 4 — find 3 days of 1-min candles for one ID from historic-eq
 // ---------------------------------------------------------------------------
 export function findHistoricScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
+  const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
   const payload = {
     collection: HISTORIC_EQ_COLLECTION,
     filter: {
@@ -422,7 +445,7 @@ export function findHistoricScenario() {
 // Scenario 5 — aggregate historic-eq into random 15/30-min OHLC bins
 // ---------------------------------------------------------------------------
 export function aggHistoricScenario() {
-  const symbol = randomChoice(SYMBOL_POOL);
+  const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
   const binSize = randomChoice([15, 30]);
   const [startTs, endTs] = pickRandomWindow(AGG_MIN_TS, AGG_MAX_TS, binSize);
 
@@ -460,4 +483,31 @@ export function aggHistoricScenario() {
   };
 
   runAggregate(payload, aggHistoricLatencyMs, aggHistoricCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 6 — find all 1-min candles for one F&O ID from oned-fno
+// ---------------------------------------------------------------------------
+export function findFnoScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_FNO);
+
+  const payload = {
+    collection: ONED_FNO_COLLECTION,
+    filter: {
+      id: symbol,
+      ts: {
+        $gte: FNO_START_TS,
+        $lt: FNO_END_TS,
+      },
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+    },
+    sort: {
+      ts: 1,
+    },
+  };
+
+  runFind(payload, findFnoLatencyMs, findFnoCountDocs);
 }
