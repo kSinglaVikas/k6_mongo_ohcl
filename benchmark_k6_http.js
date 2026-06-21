@@ -84,6 +84,11 @@ const SYMBOL_POOL_EQ       = parseSymbolsCsv(open('./symbols_eq.csv'));
 const SYMBOL_POOL_HISTORIC = parseSymbolsCsv(open('./symbols_historic.csv'));
 const SYMBOL_POOL_FNO      = parseSymbolsCsv(open('./symbols_fno.csv'));
 
+// Print the symbol pools lengths for verification
+console.log(`Loaded ${SYMBOL_POOL_EQ.length} symbols for oned-eq`);
+console.log(`Loaded ${SYMBOL_POOL_HISTORIC.length} symbols for historic-eq`);
+console.log(`Loaded ${SYMBOL_POOL_FNO.length} symbols for oned-fno`);
+
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
 // Prefixed with find_/agg_ to control sort order in summary (finds first)
