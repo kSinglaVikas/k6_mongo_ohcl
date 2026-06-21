@@ -25,12 +25,6 @@ if [ -z "$MONGO_URI" ]; then
     exit 1
 fi
 
-# Parse optional arguments
-USERS=${1:-20}
-MINUTES=${2:-2}
-FIND_WAIT_MS=${3:-1}
-AGG_WAIT_MS=${4:-10}
-
 echo "📦 Building Go wrapper..."
 if [ ! -f "go.sum" ]; then
     go mod tidy
@@ -48,4 +42,4 @@ echo "   k6 run benchmark_k6_http.js"
 echo ""
 
 # Start the wrapper in the foreground
-MONGO_URI="$MONGO_URI" PORT=9000 ./mongo_wrapper
+MONGO_URI="$MONGO_URI" PORT="${PORT:-9000}" ./mongo_wrapper

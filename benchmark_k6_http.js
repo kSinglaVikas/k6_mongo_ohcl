@@ -50,34 +50,49 @@ const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
-const FIND_START_TS = '2026-06-11T09:15:00Z';
-const FIND_END_TS   = '2026-06-11T15:30:00Z';
+const ONED_START_TS = '2026-06-03T03:45:00Z';
+const ONED_END_TS   = '2026-06-03T10:00:00Z';
 
 // Timestamp range for aggregate random windows (supply via env for accuracy)
-const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2026-05-07T00:00:00Z';
-const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2026-06-02T00:00:00Z';
+const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2023-03-20T00:00:00Z';
+const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2023-05-05T00:00:00Z';
 
-const HISTORIC_DATE_START_TS = __ENV.HISTORIC_DATE_START_TS || '2026-06-10T00:00:00Z';
-const HISTORIC_DATE_END_TS   = __ENV.HISTORIC_DATE_END_TS   || '2026-06-11T00:00:00Z';
-const HISTORIC_3D_START_TS   = __ENV.HISTORIC_3D_START_TS   || '2026-06-08T00:00:00Z';
-const HISTORIC_3D_END_TS     = __ENV.HISTORIC_3D_END_TS     || '2026-06-11T00:00:00Z';
+const HISTORIC_3D_START_TS   = __ENV.HISTORIC_3D_START_TS   || AGG_MIN_TS;
+const HISTORIC_3D_END_TS     = __ENV.HISTORIC_3D_END_TS     || new Date(new Date(AGG_MIN_TS).getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
-const SYMBOL_POOL = [
-  'JYOTICNC.NS', 'M&MFIN.NS', 'KPITTECH.NS', 'REDINGTON.NS', 'RTNPOWER.BO',
-  'LENSKART.NS', 'RECLTD.NS', 'BLACKBUCK.NS', 'CAMS.NS', 'EICHERMOT.NS',
-  'APTUS.NS', 'IPCALAB.NS', 'MFSL.NS', 'TECHM.NS', 'UNITDSPR.NS',
-  'GLENMARK.NS', 'HDFCAMC.NS', 'FORCEMOT.NS', 'CUPID.NS', 'IRFC.NS',
-  'BIKAJI.NS', 'WOCKPHARMA.NS', 'DATAPATTNS.NS', 'IOC.NS', 'WIPRO.BO',
-];
+function parseSymbolsCsv(content) {
+  const symbols = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (symbols.length === 0) {
+    throw new Error('symbols.csv is empty; provide at least one symbol');
+  }
+
+  return symbols;
+}
+
+const SYMBOL_POOL = parseSymbolsCsv(open('./symbols.csv'));
 
 // ---------------------------------------------------------------------------
 // Custom metrics  (mirror the Python per-bin-size breakdowns)
+// Prefixed with find_/agg_ to control sort order in summary (finds first)
 // ---------------------------------------------------------------------------
-const find1minEqLatencyMs       = new Trend('oned_eq_1m_find_latency_ms', true);
-const agg5minEqLatencyMs        = new Trend('oned_eq_5m_agg_latency_ms', true);
-const aggHistoric3d5mLatencyMs  = new Trend('historic_eq_3d_5m_agg_latency_ms', true);
-const findHistoricLatencyMs     = new Trend('historic_eq_3d_1m_find_latency_ms', true);
-const aggHistoricLatencyMs      = new Trend('historic_eq_15_30m_agg_latency_ms', true);
+// Latency trends
+const find1minEqLatencyMs       = new Trend('find_oned_eq_1m_latency_ms', true);
+const findHistoricLatencyMs     = new Trend('find_historic_eq_3d_1m_latency_ms', true);
+const agg5minEqLatencyMs        = new Trend('agg_oned_eq_5m_latency_ms', true);
+const aggHistoric3d5mLatencyMs  = new Trend('agg_historic_eq_3d_5m_latency_ms', true);
+const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms', true);
+
+// Count trends (documents returned)
+const find1minEqCountDocs       = new Trend('find_oned_eq_1m_count', false);
+const findHistoricCountDocs     = new Trend('find_historic_eq_3d_1m_count', false);
+const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
+const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
+const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
+
 const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
@@ -222,7 +237,7 @@ function pickRandomWindow(minIso, maxIso, binSizeMinutes) {
 // ---------------------------------------------------------------------------
 // Shared execution helpers
 // ---------------------------------------------------------------------------
-function runFind(payload, trend) {
+function runFind(payload, latencyTrend, countTrend) {
   const res = http.post(`${API_BASE_URL}/find`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'find' },
@@ -239,14 +254,17 @@ function runFind(payload, trend) {
     if (body.error) {
       findErrors.add(1);
     } else if (body.duration_ms !== undefined) {
-      trend.add(body.duration_ms);
+      latencyTrend.add(body.duration_ms);
+      if (body.count !== undefined) {
+        countTrend.add(body.count);
+      }
     }
   } catch (e) {
     findErrors.add(1);
   }
 }
 
-function runAggregate(payload, trend) {
+function runAggregate(payload, latencyTrend, countTrend) {
   const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'aggregate' },
@@ -264,7 +282,10 @@ function runAggregate(payload, trend) {
       aggErrors.add(1);
     } else if (body.duration_ms !== undefined) {
       const elapsedMs = body.duration_ms;
-      trend.add(elapsedMs);
+      latencyTrend.add(elapsedMs);
+      if (body.count !== undefined) {
+        countTrend.add(body.count);
+      }
     }
   } catch (e) {
     aggErrors.add(1);
@@ -282,8 +303,8 @@ export function find1minEqScenario() {
     filter: {
       id: symbol,
       ts: {
-        $gte: FIND_START_TS,
-        $lt: FIND_END_TS,
+        $gte: ONED_START_TS,
+        $lt: ONED_END_TS,
       },
     },
     projection: {
@@ -295,7 +316,7 @@ export function find1minEqScenario() {
     },
   };
 
-  runFind(payload, find1minEqLatencyMs);
+  runFind(payload, find1minEqLatencyMs, find1minEqCountDocs);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +331,8 @@ export function agg5minEqScenario() {
         $match: {
           id: symbol,
           ts: {
-            $gte: FIND_START_TS,
-            $lt: FIND_END_TS,
+            $gte: ONED_START_TS,
+            $lt: ONED_END_TS,
           },
         },
       },
@@ -336,7 +357,7 @@ export function agg5minEqScenario() {
     ],
   };
 
-  runAggregate(payload, agg5minEqLatencyMs);
+  runAggregate(payload, agg5minEqLatencyMs, agg5minEqCountDocs);
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +398,7 @@ export function aggHistoric3d5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoric3d5mLatencyMs);
+  runAggregate(payload, aggHistoric3d5mLatencyMs, aggHistoric3d5mCountDocs);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +424,7 @@ export function findHistoricScenario() {
     },
   };
 
-  runFind(payload, findHistoricLatencyMs);
+  runFind(payload, findHistoricLatencyMs, findHistoricCountDocs);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,5 +468,5 @@ export function aggHistoricScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricLatencyMs);
+  runAggregate(payload, aggHistoricLatencyMs, aggHistoricCountDocs);
 }

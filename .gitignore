@@ -36,3 +36,6 @@ logs/
 
 # Dependencies
 go.mod.backup
+
+# Input & Out Files
+*.csv

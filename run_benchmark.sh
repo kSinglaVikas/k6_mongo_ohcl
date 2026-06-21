@@ -6,6 +6,8 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
+API_BASE_URL=${API_BASE_URL:-http://localhost:9000}
+
 # Check that k6 is installed
 if ! command -v k6 &> /dev/null; then
     echo "❌ k6 is not installed. Install with: brew install k6"
@@ -13,8 +15,8 @@ if ! command -v k6 &> /dev/null; then
 fi
 
 # Check that the API is running
-echo "⏳ Checking if Go wrapper is running on http://localhost:9000..."
-if ! curl -s http://localhost:9000/health > /dev/null 2>&1; then
+echo "⏳ Checking if Go wrapper is running on $API_BASE_URL..."
+if ! curl -s "$API_BASE_URL/health" > /dev/null 2>&1; then
     echo "❌ Go wrapper is not running!"
     echo "Start it in another terminal with: ./start_wrapper.sh"
     exit 1
@@ -44,7 +46,7 @@ echo "   AGG_MAX_TS=$AGG_MAX_TS"
 echo ""
 
 k6 run \
-    --env API_BASE_URL=http://localhost:9000 \
+    --env API_BASE_URL=$API_BASE_URL \
     --env TOTAL_RPS=$TOTAL_RPS \
     --env MINUTES=$MINUTES \
     --env RATE_STEP=$RATE_STEP \
