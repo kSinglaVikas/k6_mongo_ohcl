@@ -219,7 +219,7 @@ func handleFind(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	opts := options.Find().SetBatchSize(400)
+	opts := options.Find().SetBatchSize(200)
 	if req.Projection != nil {
 		opts.SetProjection(req.Projection)
 	}
