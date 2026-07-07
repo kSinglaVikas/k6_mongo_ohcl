@@ -9,18 +9,25 @@ This benchmark uses k6 plus a Go HTTP wrapper for MongoDB queries.
   - `POST /aggregate`
   - `GET /health`
 - `benchmark_k6_http.js`
-  - 8 weighted scenarios using `ramping-arrival-rate`
+  - 10 weighted scenarios using `ramping-arrival-rate`
 
 ## Current Scenario Set
 
-1. `oned_eq_1m_find` — find 1-minute candles for one EQ ID in `oned-eq`
-2. `oned_eq_5m_agg` — aggregate 5-minute OHLC candles in `oned-eq`
-3. `historic_eq_3d_5m_agg` — aggregate 3 days into 5-minute OHLC in `historic-eq`
-4. `historic_eq_3d_1m_find` — find 3 days of 1-minute candles in `historic-eq`
-5. `historic_eq_15_30m_agg` — aggregate `historic-eq` into random 15/30-minute OHLC bins
-6. `oned_fno_1m_find` — find 1-minute candles for one F&O ID in `oned-fno` (date: 2026-06-02)
-7. `historic_eq_packed_1d_find` — find packed 1-day candles in `historic-eq-packed`
-8. `oned_fno_packed_5m_agg` — aggregate packed 1-day candles into 5-minute OHLC in `oned-fno-packed`
+Find phase:
+
+1. `oned_eq_ts_find` — find 1-minute candles for one EQ ID in `oned-eq`
+2. `oned_eq_packed_find` — find packed 1-day candles for one EQ ID in `oned-eq-packed`
+3. `oned_fno_ts_find` — find 1-minute candles for one F&O ID in `oned-fno`
+4. `oned_fno_packed_find` — find packed 1-day candles for one F&O ID in `oned-fno-packed`
+
+Aggregate phase:
+
+5. `oned_eq_ts_5m_agg` — aggregate 5-minute OHLC candles in `oned-eq`
+6. `oned_eq_packed_5m_agg` — aggregate 5-minute OHLC candles in `oned-eq-packed`
+7. `oned_fno_ts_5m_agg` — aggregate 5-minute OHLC candles in `oned-fno`
+8. `oned_fno_packed_5m_agg` — aggregate 5-minute OHLC candles in `oned-fno-packed`
+9. `historic_ts_window_agg` — aggregate `historic-eq` in random 5-30 day windows at 5/15/30-minute bins
+10. `historic_packed_window_agg` — aggregate `historic-eq-packed` in random 5-30 day windows at 5/15/30-minute bins
 
 ## Traffic Distribution
 
@@ -28,17 +35,19 @@ Traffic is distributed by request rate, separately per phase.
 
 Find phase (totals 100%):
 
-- `oned_eq_1m_find`: 55%
-- `historic_eq_3d_1m_find`: 10%
-- `oned_fno_1m_find`: 25%
-- `historic_eq_packed_1d_find`: 10%
+- `oned_eq_ts_find`: 35%
+- `oned_eq_packed_find`: 15%
+- `oned_fno_ts_find`: 35%
+- `oned_fno_packed_find`: 15%
 
 Aggregate phase (totals 100%):
 
-- `oned_eq_5m_agg`: 45%
-- `historic_eq_3d_5m_agg`: 20%
-- `historic_eq_15_30m_agg`: 25%
-- `oned_fno_packed_5m_agg`: 10%
+- `oned_eq_ts_5m_agg`: 20%
+- `oned_eq_packed_5m_agg`: 15%
+- `oned_fno_ts_5m_agg`: 20%
+- `oned_fno_packed_5m_agg`: 15%
+- `historic_ts_window_agg`: 15%
+- `historic_packed_window_agg`: 15%
 
 > Percentages are relative to `TOTAL_RPS` within each phase (find and aggregate run in separate phases).
 
@@ -162,8 +171,11 @@ k6 run \
   --env RATE_STEP=1 \
   --env RATE_STEP_SECONDS=5 \
   --env MINUTES=2 \
+  --env ONED_EQ_PACKED_COLLECTION=oned-eq-packed \
   --env HISTORIC_EQ_PACKED_COLLECTION=historic-eq-packed \
   --env ONED_FNO_PACKED_COLLECTION=oned-fno-packed \
+  --env HIST_WINDOW_MIN_DAYS=5 \
+  --env HIST_WINDOW_MAX_DAYS=30 \
   benchmark_k6_http.js
 ```
 
@@ -194,33 +206,35 @@ API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 |---|---|---|
 | `API_BASE_URL` | `http://localhost:9000` | Wrapper URL |
 | `TOTAL_RPS` | `100` | Total request rate across all scenarios |
+| `FIND_PHASE_RPS` | `TOTAL_RPS` | Total request rate during find phase |
+| `AGG_PHASE_RPS` | `TOTAL_RPS` | Total request rate during aggregate phase |
 | `PREALLOCATED_VUS` | `50` | Pre-allocated VUs per scenario |
-| `MAX_VUS` | `500` | Max VUs per scenario |
+| `MAX_VUS` | `1500` | Max VUs per scenario |
 | `RATE_STEP` | `1` | Rate increment step (req/s) |
 | `RATE_STEP_SECONDS` | `5` | Seconds per rate increment |
 | `MINUTES` | `2` | Steady-state duration after ramp |
 | `ONED_EQ_COLLECTION` | `oned-eq` | Target collection for oned_eq scenarios |
+| `ONED_EQ_PACKED_COLLECTION` | `oned-eq-packed` | Target collection for packed oned_eq scenarios |
 | `HISTORIC_EQ_COLLECTION` | `historic-eq` | Target collection for historic_eq scenarios |
 | `ONED_FNO_COLLECTION` | `oned-fno` | Target collection for oned_fno scenarios |
 | `HISTORIC_EQ_PACKED_COLLECTION` | `historic-eq-packed` | Target collection for packed historic find scenario |
 | `ONED_FNO_PACKED_COLLECTION` | `oned-fno-packed` | Target collection for packed fno aggregate scenario |
+| `HIST_WINDOW_MIN_DAYS` | `5` | Min historic window size (days) for historic window scenarios |
+| `HIST_WINDOW_MAX_DAYS` | `30` | Max historic window size (days) for historic window scenarios |
 | `AGG_MIN_TS` | `2026-05-07T00:00:00Z` | Min timestamp for random agg window |
 | `AGG_MAX_TS` | `2026-06-02T00:00:00Z` | Max timestamp for random agg window |
 
 ## Metrics
 
-Custom metrics emitted:
+Custom metrics emitted include:
 
-- `find_oned_eq_1m_latency_ms`
-- `agg_oned_eq_5m_latency_ms`
-- `agg_historic_eq_3d_5m_latency_ms`
-- `find_historic_eq_3d_1m_latency_ms`
-- `agg_historic_eq_15_30m_latency_ms`
-- `find_historic_eq_packed_1d_latency_ms`
-- `agg_oned_fno_packed_5m_latency_ms`
-- `find_errors`
-- `agg_errors`
-- `http_errors`
+- `find_oned_eq_ts_latency_ms`, `find_oned_eq_packed_latency_ms`
+- `find_oned_fno_ts_latency_ms`, `find_oned_fno_packed_latency_ms`
+- `agg_oned_eq_ts_5m_latency_ms`, `agg_oned_eq_packed_5m_latency_ms`
+- `agg_oned_fno_ts_5m_latency_ms`, `agg_oned_fno_packed_5m_latency_ms`
+- `agg_historic_ts_window_latency_ms`, `agg_historic_packed_window_latency_ms`
+- corresponding `*_count` trends
+- `find_errors`, `agg_errors`, `http_errors`
 
 `benchmark_k6_http.js` also defines `handleSummary()` to print custom metrics in two sections:
 
