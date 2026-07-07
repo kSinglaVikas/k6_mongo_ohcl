@@ -1,7 +1,7 @@
 /**
  * k6 benchmark using HTTP wrapper for MongoDB queries.
  *
- * 5 query types in parallel:
+ * Query types in parallel:
  *   1. oned_eq_1m_find          — find all 1-min candles for one EQ ID for a date from oned-eq
  *   2. oned_eq_5m_agg           — aggregate 5-min OHLC candles for one EQ ID
  *   3. historic_eq_3d_5m_agg    — aggregate 3 days of historic-eq into 5-min OHLC bins
@@ -9,6 +9,7 @@
  *   5. historic_eq_15_30m_agg   — aggregate historic-eq into random 15/30-min OHLC bins
  *   6. oned_fno_1m_find         — find all 1-min candles for one F&O ID from oned-fno
  *   7. oned_eq_packed_1d_find   — find packed 1d data for one EQ ID from oned-eq-packed
+ *   8. oned_eq_packed_5m_agg    — aggregate packed 1d data into 5-min OHLC for one EQ ID
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -104,6 +105,7 @@ const findHistoricLatencyMs     = new Trend('find_historic_eq_3d_1m_latency_ms',
 const findFnoLatencyMs          = new Trend('find_oned_fno_1m_latency_ms', true);
 const findEqPacked1dLatencyMs   = new Trend('find_oned_eq_packed_1d_latency_ms', true);
 const agg5minEqLatencyMs        = new Trend('agg_oned_eq_5m_latency_ms', true);
+const aggEqPacked5mLatencyMs    = new Trend('agg_oned_eq_packed_5m_latency_ms', true);
 const aggHistoric3d5mLatencyMs  = new Trend('agg_historic_eq_3d_5m_latency_ms', true);
 const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms', true);
 
@@ -113,6 +115,7 @@ const findHistoricCountDocs     = new Trend('find_historic_eq_3d_1m_count', fals
 const findFnoCountDocs          = new Trend('find_oned_fno_1m_count', false);
 const findEqPacked1dCountDocs   = new Trend('find_oned_eq_packed_1d_count', false);
 const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
+const aggEqPacked5mCountDocs    = new Trend('agg_oned_eq_packed_5m_count', false);
 const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
 const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
 
@@ -142,6 +145,7 @@ const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(TOTAL_RPS * 0.30));
 const RATE_ONED_EQ_PACKED_1D_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.50));
+const RATE_ONED_EQ_PACKED_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
 const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.30));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
@@ -174,6 +178,17 @@ export const options = {
       startTime: AGG_PHASE_START,
       exec:      'agg5minEqScenario',
       tags:      { scenario: 'oned_eq_5m_agg' },
+    },
+    oned_eq_packed_5m_agg: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_PACKED_5M_AGG),
+      startTime: AGG_PHASE_START,
+      exec:      'aggEqPacked5mScenario',
+      tags:      { scenario: 'oned_eq_packed_5m_agg' },
     },
     historic_eq_3d_5m_agg: {
       executor:  'ramping-arrival-rate',
@@ -561,4 +576,45 @@ export function findEqPacked1dScenario() {
   };
 
   runFind(payload, findEqPacked1dLatencyMs, findEqPacked1dCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 8 — aggregate packed 1d data into 5-min OHLC for one EQ ID
+// ---------------------------------------------------------------------------
+export function aggEqPacked5mScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
+
+  const payload = {
+    collection: ONED_EQ_PACKED_COLLECTION,
+    pipeline: [
+      {
+        $match: {
+          id: symbol,
+        },
+      },
+      {
+        $unwind: '$data.1d',
+      },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$data.1d.ts',
+              unit: 'minute',
+              binSize: 5,
+            },
+          },
+          o: { $first: '$data.1d.o' },
+          h: { $max: '$data.1d.h' },
+          l: { $min: '$data.1d.l' },
+          c: { $last: '$data.1d.c' },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ],
+  };
+
+  runAggregate(payload, aggEqPacked5mLatencyMs, aggEqPacked5mCountDocs);
 }
