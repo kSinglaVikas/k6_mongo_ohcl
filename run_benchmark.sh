@@ -38,6 +38,8 @@ PREALLOCATED_VUS=${5:-${PREALLOCATED_VUS:-50}}
 MAX_VUS=${6:-${MAX_VUS:-500}}
 AGG_MIN_TS=${7:-${AGG_MIN_TS:-2023-03-20T00:00:00Z}}
 AGG_MAX_TS=${8:-${AGG_MAX_TS:-2023-05-05T00:00:00Z}}
+FIND_PHASE_RPS=${9:-${FIND_PHASE_RPS:-$TOTAL_RPS}}
+AGG_PHASE_RPS=${10:-${AGG_PHASE_RPS:-$TOTAL_RPS}}
 
 echo ""
 echo "📊 Running k6 benchmark with settings:"
@@ -49,6 +51,8 @@ echo "   PREALLOCATED_VUS=$PREALLOCATED_VUS"
 echo "   MAX_VUS=$MAX_VUS"
 echo "   AGG_MIN_TS=$AGG_MIN_TS"
 echo "   AGG_MAX_TS=$AGG_MAX_TS"
+echo "   FIND_PHASE_RPS=$FIND_PHASE_RPS"
+echo "   AGG_PHASE_RPS=$AGG_PHASE_RPS"
 echo ""
 
 k6 run \
@@ -61,4 +65,6 @@ k6 run \
     --env MAX_VUS=$MAX_VUS \
     --env AGG_MIN_TS=$AGG_MIN_TS \
     --env AGG_MAX_TS=$AGG_MAX_TS \
+    --env FIND_PHASE_RPS=$FIND_PHASE_RPS \
+    --env AGG_PHASE_RPS=$AGG_PHASE_RPS \
     benchmark_k6_http.js

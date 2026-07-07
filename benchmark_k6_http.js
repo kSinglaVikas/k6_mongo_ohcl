@@ -25,6 +25,8 @@
  * Tune via env vars (all optional):
  *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:8080)
  *   TOTAL_RPS          — total req/sec across scenarios (default: 100)
+ *   FIND_PHASE_RPS     — total req/sec during find phase (default: TOTAL_RPS)
+ *   AGG_PHASE_RPS      — total req/sec during aggregate phase (default: TOTAL_RPS)
  *   PREALLOCATED_VUS   — pre-allocated VUs per scenario (default: 50)
  *   MAX_VUS            — max VUs per scenario          (default: 500)
  *   RATE_STEP          — minimum req/sec added per step (default: 1)
@@ -48,6 +50,8 @@ import { SharedArray } from 'k6/data';
 // ---------------------------------------------------------------------------
 const API_BASE_URL = __ENV.API_BASE_URL  || 'http://localhost:9000';
 const TOTAL_RPS    = parseInt(__ENV.TOTAL_RPS || '100');
+const FIND_PHASE_RPS = parseInt(__ENV.FIND_PHASE_RPS || String(TOTAL_RPS));
+const AGG_PHASE_RPS  = parseInt(__ENV.AGG_PHASE_RPS || String(TOTAL_RPS));
 const PREALLOCATED_VUS = parseInt(__ENV.PREALLOCATED_VUS || '50');
 const MAX_VUS      = parseInt(__ENV.MAX_VUS || '500');
 const RATE_STEP    = parseInt(__ENV.RATE_STEP || '1');
@@ -143,16 +147,16 @@ function buildRateStages(targetRate) {
 }
 
 // Find phase split (totals 100%): 55 + 10 + 25 + 10
-const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.55));
-const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
-const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(TOTAL_RPS * 0.25));
-const RATE_HIST_EQ_PACKED_1D_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
+const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.55));
+const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
+const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(FIND_PHASE_RPS * 0.25));
+const RATE_HIST_EQ_PACKED_1D_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
 
 // Aggregate phase split (totals 100%): 45 + 10 + 20 + 25
-const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.45));
-const RATE_ONED_FNO_PACKED_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.10));
-const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
-const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.25));
+const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.45));
+const RATE_ONED_FNO_PACKED_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.10));
+const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
+const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.25));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
 const FIND_PHASE_START = '0s';
 const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
