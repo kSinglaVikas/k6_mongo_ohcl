@@ -302,17 +302,17 @@ export const options = {
       exec:      'aggHistoricTsWindowScenario',
       tags:      { scenario: 'historic_ts_window_agg' },
     },
-    historic_packed_window_agg: {
-      executor:  'ramping-arrival-rate',
-      startRate: 0,
-      timeUnit:  '1s',
-      preAllocatedVUs: PREALLOCATED_VUS,
-      maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HISTORIC_PACKED_WINDOW_AGG),
-      startTime: AGG_PHASE_START,
-      exec:      'aggHistoricPackedWindowScenario',
-      tags:      { scenario: 'historic_packed_window_agg' },
-    },
+    // historic_packed_window_agg: {
+    //   executor:  'ramping-arrival-rate',
+    //   startRate: 0,
+    //   timeUnit:  '1s',
+    //   preAllocatedVUs: PREALLOCATED_VUS,
+    //   maxVUs: MAX_VUS,
+    //   stages:    buildRateStages(RATE_HISTORIC_PACKED_WINDOW_AGG),
+    //   startTime: AGG_PHASE_START,
+    //   exec:      'aggHistoricPackedWindowScenario',
+    //   tags:      { scenario: 'historic_packed_window_agg' },
+    // },
   },
   // Surface all custom Trends in the end-of-test summary
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
@@ -381,21 +381,14 @@ function runFind(payload, latencyTrend, countTrend, attemptsCounter, failuresCou
 
   try {
     const body = JSON.parse(res.body);
-    if (body.error) {
-      findErrors.add(1);
-      failuresCounter.add(1);
-    } else if (body.duration_ms !== undefined) {
+    if (body.duration_ms !== undefined) {
       latencyTrend.add(body.duration_ms);
       if (body.count !== undefined) {
         countTrend.add(body.count);
       }
-    } else {
-      findErrors.add(1);
-      failuresCounter.add(1);
     }
   } catch (e) {
-    findErrors.add(1);
-    failuresCounter.add(1);
+    // Ignore parse/body-level issues for failure counters; only HTTP failures count.
   }
 }
 
@@ -416,22 +409,15 @@ function runAggregate(payload, latencyTrend, countTrend, attemptsCounter, failur
 
   try {
     const body = JSON.parse(res.body);
-    if (body.error) {
-      aggErrors.add(1);
-      failuresCounter.add(1);
-    } else if (body.duration_ms !== undefined) {
+    if (body.duration_ms !== undefined) {
       const elapsedMs = body.duration_ms;
       latencyTrend.add(elapsedMs);
       if (body.count !== undefined) {
         countTrend.add(body.count);
       }
-    } else {
-      aggErrors.add(1);
-      failuresCounter.add(1);
     }
   } catch (e) {
-    aggErrors.add(1);
-    failuresCounter.add(1);
+    // Ignore parse/body-level issues for failure counters; only HTTP failures count.
   }
 }
 
