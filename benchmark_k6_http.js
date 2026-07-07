@@ -181,19 +181,19 @@ function buildRateStages(targetRate) {
   ];
 }
 
-// Find phase split (totals 100%): 35 + 15 + 35 + 15
-const RATE_ONED_EQ_TS_FIND      = Math.max(1, Math.round(FIND_PHASE_RPS * 0.35));
-const RATE_ONED_EQ_PACKED_FIND  = Math.max(1, Math.round(FIND_PHASE_RPS * 0.15));
-const RATE_ONED_FNO_TS_FIND     = Math.max(1, Math.round(FIND_PHASE_RPS * 0.35));
-const RATE_ONED_FNO_PACKED_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.15));
+// Find phase split (totals 100%)
+const RATE_ONED_EQ_TS_FIND      = Math.max(1, Math.round(FIND_PHASE_RPS * 0.40));
+const RATE_ONED_EQ_PACKED_FIND  = Math.max(1, Math.round(FIND_PHASE_RPS * 0.40));
+const RATE_ONED_FNO_TS_FIND     = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
+const RATE_ONED_FNO_PACKED_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
 
-// Aggregate phase split (totals 100%): 20 + 15 + 20 + 15 + 15 + 15
+// Aggregate phase split (totals 100%): 20 + 20 + 20 + 15 + 15 + 10
 const RATE_ONED_EQ_TS_5M_AGG         = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
-const RATE_ONED_EQ_PACKED_5M_AGG     = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
+const RATE_ONED_EQ_PACKED_5M_AGG     = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
 const RATE_ONED_FNO_TS_5M_AGG        = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
 const RATE_ONED_FNO_PACKED_5M_AGG    = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
 const RATE_HISTORIC_TS_WINDOW_AGG    = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
-const RATE_HISTORIC_PACKED_WINDOW_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
+const RATE_HISTORIC_PACKED_WINDOW_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.10));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
 const FIND_PHASE_START = '0s';
 const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
@@ -850,95 +850,3 @@ export function aggHistoricPackedWindowScenario() {
   runAggregate(payload, aggHistoricPackedWindowLatencyMs, aggHistoricPackedWindowCountDocs, aggHistoricPackedWindowAttempts, aggHistoricPackedWindowFailures);
 }
 
-function formatSummaryLine(name, metric) {
-  if (!metric) {
-    return `${name}: no successful samples recorded`;
-  }
-
-  const values = metric.values || {};
-  if (metric.type === 'trend') {
-    const avg = values.avg !== undefined ? values.avg.toFixed(2) : 'n/a';
-    const p95 = values['p(95)'] !== undefined ? values['p(95)'].toFixed(2) : 'n/a';
-    const p99 = values['p(99)'] !== undefined ? values['p(99)'].toFixed(2) : 'n/a';
-    return `${name}: avg=${avg} p95=${p95} p99=${p99}`;
-  }
-  if (metric.type === 'counter') {
-    const count = values.count !== undefined ? values.count : 'n/a';
-    const rate = values.rate !== undefined ? values.rate.toFixed(2) : 'n/a';
-    return `${name}: count=${count} rate=${rate}`;
-  }
-  return `${name}: ${JSON.stringify(values)}`;
-}
-
-export function handleSummary(data) {
-  const metricsByName = data.metrics || {};
-
-  const tsMetricNames = [
-    'find_oned_eq_ts_attempts',
-    'find_oned_eq_ts_failures',
-    'find_oned_eq_ts_count',
-    'find_oned_eq_ts_latency_ms',
-    'find_oned_fno_ts_attempts',
-    'find_oned_fno_ts_failures',
-    'find_oned_fno_ts_count',
-    'find_oned_fno_ts_latency_ms',
-    'agg_oned_eq_ts_5m_attempts',
-    'agg_oned_eq_ts_5m_failures',
-    'agg_oned_eq_ts_5m_count',
-    'agg_oned_eq_ts_5m_latency_ms',
-    'agg_oned_fno_ts_5m_attempts',
-    'agg_oned_fno_ts_5m_failures',
-    'agg_oned_fno_ts_5m_count',
-    'agg_oned_fno_ts_5m_latency_ms',
-    'agg_historic_ts_window_attempts',
-    'agg_historic_ts_window_failures',
-    'agg_historic_ts_window_count',
-    'agg_historic_ts_window_latency_ms',
-    'find_errors',
-    'agg_errors',
-    'http_errors',
-  ];
-
-  const packedMetricNames = [
-    'find_oned_eq_packed_attempts',
-    'find_oned_eq_packed_failures',
-    'find_oned_eq_packed_count',
-    'find_oned_eq_packed_latency_ms',
-    'find_oned_fno_packed_attempts',
-    'find_oned_fno_packed_failures',
-    'find_oned_fno_packed_count',
-    'find_oned_fno_packed_latency_ms',
-    'agg_oned_eq_packed_5m_attempts',
-    'agg_oned_eq_packed_5m_failures',
-    'agg_oned_eq_packed_5m_count',
-    'agg_oned_eq_packed_5m_latency_ms',
-    'agg_oned_fno_packed_5m_attempts',
-    'agg_oned_fno_packed_5m_failures',
-    'agg_oned_fno_packed_5m_count',
-    'agg_oned_fno_packed_5m_latency_ms',
-    'agg_historic_packed_window_attempts',
-    'agg_historic_packed_window_failures',
-    'agg_historic_packed_window_count',
-    'agg_historic_packed_window_latency_ms',
-  ];
-
-  const lines = [];
-  lines.push('=== TS Metrics ===');
-  tsMetricNames.forEach((name) => {
-    lines.push(formatSummaryLine(name, metricsByName[name]));
-  });
-
-  lines.push('');
-  lines.push('=== Packed Metrics ===');
-  packedMetricNames.forEach((name) => {
-    lines.push(formatSummaryLine(name, metricsByName[name]));
-  });
-
-  lines.push('');
-  lines.push('=== Full Raw Summary (JSON) ===');
-
-  return {
-    stdout: `${lines.join('\n')}\n`,
-    'summary.json': JSON.stringify(data, null, 2),
-  };
-}
