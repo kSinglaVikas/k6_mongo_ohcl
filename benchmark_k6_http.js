@@ -574,34 +574,13 @@ export function aggOnedEqPacked5mScenario() {
         },
       },
       {
-        $unwind: '$data.1d',
-      },
-      {
-        $addFields: {
-          candleTs: {
-            $convert: {
-              input: '$data.1d.ts',
-              to: 'date',
-              onError: null,
-              onNull: null,
-            },
-          },
-        },
-      },
-      {
-        $match: {
-          candleTs: {
-            $ne: null,
-            $gte: ONED_START_TS,
-            $lt: ONED_END_TS,
-          },
-        },
+        $unwind: { path: '$data.1d' },
       },
       {
         $group: {
           _id: {
             $dateTrunc: {
-              date: '$candleTs',
+              date: '$data.1d.ts',
               unit: 'minute',
               binSize: 5,
             },
