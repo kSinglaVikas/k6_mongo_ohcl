@@ -141,6 +141,29 @@ const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
 const httpErrors    = new Counter('http_errors');
 
+// Per-scenario visibility for attempts/failures (useful when trends have no successful samples)
+const findOnedEqTsAttempts      = new Counter('find_oned_eq_ts_attempts');
+const findOnedEqTsFailures      = new Counter('find_oned_eq_ts_failures');
+const findOnedEqPackedAttempts  = new Counter('find_oned_eq_packed_attempts');
+const findOnedEqPackedFailures  = new Counter('find_oned_eq_packed_failures');
+const findOnedFnoTsAttempts     = new Counter('find_oned_fno_ts_attempts');
+const findOnedFnoTsFailures     = new Counter('find_oned_fno_ts_failures');
+const findOnedFnoPackedAttempts = new Counter('find_oned_fno_packed_attempts');
+const findOnedFnoPackedFailures = new Counter('find_oned_fno_packed_failures');
+
+const aggOnedEqTs5mAttempts         = new Counter('agg_oned_eq_ts_5m_attempts');
+const aggOnedEqTs5mFailures         = new Counter('agg_oned_eq_ts_5m_failures');
+const aggOnedEqPacked5mAttempts     = new Counter('agg_oned_eq_packed_5m_attempts');
+const aggOnedEqPacked5mFailures     = new Counter('agg_oned_eq_packed_5m_failures');
+const aggOnedFnoTs5mAttempts        = new Counter('agg_oned_fno_ts_5m_attempts');
+const aggOnedFnoTs5mFailures        = new Counter('agg_oned_fno_ts_5m_failures');
+const aggOnedFnoPacked5mAttempts    = new Counter('agg_oned_fno_packed_5m_attempts');
+const aggOnedFnoPacked5mFailures    = new Counter('agg_oned_fno_packed_5m_failures');
+const aggHistoricTsWindowAttempts   = new Counter('agg_historic_ts_window_attempts');
+const aggHistoricTsWindowFailures   = new Counter('agg_historic_ts_window_failures');
+const aggHistoricPackedWindowAttempts = new Counter('agg_historic_packed_window_attempts');
+const aggHistoricPackedWindowFailures = new Counter('agg_historic_packed_window_failures');
+
 function buildRateStages(targetRate) {
   const safeTarget = Math.max(targetRate, 1);
   const totalSeconds = Math.max(Math.floor(MINUTES * 60), 1);
@@ -341,7 +364,9 @@ function pickRandomWindowByDays(minIso, maxIso, minDays, maxDays) {
 // ---------------------------------------------------------------------------
 // Shared execution helpers
 // ---------------------------------------------------------------------------
-function runFind(payload, latencyTrend, countTrend) {
+function runFind(payload, latencyTrend, countTrend, attemptsCounter, failuresCounter) {
+  attemptsCounter.add(1);
+
   const res = http.post(`${API_BASE_URL}/find`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'find' },
@@ -349,6 +374,7 @@ function runFind(payload, latencyTrend, countTrend) {
 
   if (res.status !== 200) {
     findErrors.add(1);
+    failuresCounter.add(1);
     httpErrors.add(1);
     return;
   }
@@ -357,18 +383,25 @@ function runFind(payload, latencyTrend, countTrend) {
     const body = JSON.parse(res.body);
     if (body.error) {
       findErrors.add(1);
+      failuresCounter.add(1);
     } else if (body.duration_ms !== undefined) {
       latencyTrend.add(body.duration_ms);
       if (body.count !== undefined) {
         countTrend.add(body.count);
       }
+    } else {
+      findErrors.add(1);
+      failuresCounter.add(1);
     }
   } catch (e) {
     findErrors.add(1);
+    failuresCounter.add(1);
   }
 }
 
-function runAggregate(payload, latencyTrend, countTrend) {
+function runAggregate(payload, latencyTrend, countTrend, attemptsCounter, failuresCounter) {
+  attemptsCounter.add(1);
+
   const res = http.post(`${API_BASE_URL}/aggregate`, JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json' },
     tags: { endpoint: 'aggregate' },
@@ -376,6 +409,7 @@ function runAggregate(payload, latencyTrend, countTrend) {
 
   if (res.status !== 200) {
     aggErrors.add(1);
+    failuresCounter.add(1);
     httpErrors.add(1);
     return;
   }
@@ -384,15 +418,20 @@ function runAggregate(payload, latencyTrend, countTrend) {
     const body = JSON.parse(res.body);
     if (body.error) {
       aggErrors.add(1);
+      failuresCounter.add(1);
     } else if (body.duration_ms !== undefined) {
       const elapsedMs = body.duration_ms;
       latencyTrend.add(elapsedMs);
       if (body.count !== undefined) {
         countTrend.add(body.count);
       }
+    } else {
+      aggErrors.add(1);
+      failuresCounter.add(1);
     }
   } catch (e) {
     aggErrors.add(1);
+    failuresCounter.add(1);
   }
 }
 
@@ -420,7 +459,7 @@ export function findOnedEqTsScenario() {
     },
   };
 
-  runFind(payload, findOnedEqTsLatencyMs, findOnedEqTsCountDocs);
+  runFind(payload, findOnedEqTsLatencyMs, findOnedEqTsCountDocs, findOnedEqTsAttempts, findOnedEqTsFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -439,12 +478,12 @@ export function findOnedEqPackedScenario() {
       id: 0,
       'data.1d': 1,
       count: 1,
-      firstTs: 1,
-      lastTs: 1,
+      firstTs: 0,
+      lastTs: 0,
     },
   };
 
-  runFind(payload, findOnedEqPackedLatencyMs, findOnedEqPackedCountDocs);
+  runFind(payload, findOnedEqPackedLatencyMs, findOnedEqPackedCountDocs, findOnedEqPackedAttempts, findOnedEqPackedFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +510,7 @@ export function findOnedFnoTsScenario() {
     },
   };
 
-  runFind(payload, findOnedFnoTsLatencyMs, findOnedFnoTsCountDocs);
+  runFind(payload, findOnedFnoTsLatencyMs, findOnedFnoTsCountDocs, findOnedFnoTsAttempts, findOnedFnoTsFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +534,7 @@ export function findOnedFnoPackedScenario() {
     },
   };
 
-  runFind(payload, findOnedFnoPackedLatencyMs, findOnedFnoPackedCountDocs);
+  runFind(payload, findOnedFnoPackedLatencyMs, findOnedFnoPackedCountDocs, findOnedFnoPackedAttempts, findOnedFnoPackedFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +576,7 @@ export function aggOnedEqTs5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggOnedEqTs5mLatencyMs, aggOnedEqTs5mCountDocs);
+  runAggregate(payload, aggOnedEqTs5mLatencyMs, aggOnedEqTs5mCountDocs, aggOnedEqTs5mAttempts, aggOnedEqTs5mFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +638,7 @@ export function aggOnedEqPacked5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggOnedEqPacked5mLatencyMs, aggOnedEqPacked5mCountDocs);
+  runAggregate(payload, aggOnedEqPacked5mLatencyMs, aggOnedEqPacked5mCountDocs, aggOnedEqPacked5mAttempts, aggOnedEqPacked5mFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -641,7 +680,7 @@ export function aggOnedFnoTs5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggOnedFnoTs5mLatencyMs, aggOnedFnoTs5mCountDocs);
+  runAggregate(payload, aggOnedFnoTs5mLatencyMs, aggOnedFnoTs5mCountDocs, aggOnedFnoTs5mAttempts, aggOnedFnoTs5mFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +742,7 @@ export function aggOnedFnoPacked5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggOnedFnoPacked5mLatencyMs, aggOnedFnoPacked5mCountDocs);
+  runAggregate(payload, aggOnedFnoPacked5mLatencyMs, aggOnedFnoPacked5mCountDocs, aggOnedFnoPacked5mAttempts, aggOnedFnoPacked5mFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -747,7 +786,7 @@ export function aggHistoricTsWindowScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricTsWindowLatencyMs, aggHistoricTsWindowCountDocs);
+  runAggregate(payload, aggHistoricTsWindowLatencyMs, aggHistoricTsWindowCountDocs, aggHistoricTsWindowAttempts, aggHistoricTsWindowFailures);
 }
 
 // ---------------------------------------------------------------------------
@@ -811,10 +850,14 @@ export function aggHistoricPackedWindowScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricPackedWindowLatencyMs, aggHistoricPackedWindowCountDocs);
+  runAggregate(payload, aggHistoricPackedWindowLatencyMs, aggHistoricPackedWindowCountDocs, aggHistoricPackedWindowAttempts, aggHistoricPackedWindowFailures);
 }
 
 function formatSummaryLine(name, metric) {
+  if (!metric) {
+    return `${name}: no successful samples recorded`;
+  }
+
   const values = metric.values || {};
   if (metric.type === 'trend') {
     const avg = values.avg !== undefined ? values.avg.toFixed(2) : 'n/a';
@@ -831,22 +874,67 @@ function formatSummaryLine(name, metric) {
 }
 
 export function handleSummary(data) {
-  const metricEntries = Object.entries(data.metrics || {});
-  const customEntries = metricEntries.filter(([name]) => name.startsWith('find_') || name.startsWith('agg_') || name.endsWith('_errors'));
+  const metricsByName = data.metrics || {};
 
-  const tsEntries = customEntries.filter(([name]) => !name.includes('_packed_'));
-  const packedEntries = customEntries.filter(([name]) => name.includes('_packed_'));
+  const tsMetricNames = [
+    'find_oned_eq_ts_attempts',
+    'find_oned_eq_ts_failures',
+    'find_oned_eq_ts_count',
+    'find_oned_eq_ts_latency_ms',
+    'find_oned_fno_ts_attempts',
+    'find_oned_fno_ts_failures',
+    'find_oned_fno_ts_count',
+    'find_oned_fno_ts_latency_ms',
+    'agg_oned_eq_ts_5m_attempts',
+    'agg_oned_eq_ts_5m_failures',
+    'agg_oned_eq_ts_5m_count',
+    'agg_oned_eq_ts_5m_latency_ms',
+    'agg_oned_fno_ts_5m_attempts',
+    'agg_oned_fno_ts_5m_failures',
+    'agg_oned_fno_ts_5m_count',
+    'agg_oned_fno_ts_5m_latency_ms',
+    'agg_historic_ts_window_attempts',
+    'agg_historic_ts_window_failures',
+    'agg_historic_ts_window_count',
+    'agg_historic_ts_window_latency_ms',
+    'find_errors',
+    'agg_errors',
+    'http_errors',
+  ];
+
+  const packedMetricNames = [
+    'find_oned_eq_packed_attempts',
+    'find_oned_eq_packed_failures',
+    'find_oned_eq_packed_count',
+    'find_oned_eq_packed_latency_ms',
+    'find_oned_fno_packed_attempts',
+    'find_oned_fno_packed_failures',
+    'find_oned_fno_packed_count',
+    'find_oned_fno_packed_latency_ms',
+    'agg_oned_eq_packed_5m_attempts',
+    'agg_oned_eq_packed_5m_failures',
+    'agg_oned_eq_packed_5m_count',
+    'agg_oned_eq_packed_5m_latency_ms',
+    'agg_oned_fno_packed_5m_attempts',
+    'agg_oned_fno_packed_5m_failures',
+    'agg_oned_fno_packed_5m_count',
+    'agg_oned_fno_packed_5m_latency_ms',
+    'agg_historic_packed_window_attempts',
+    'agg_historic_packed_window_failures',
+    'agg_historic_packed_window_count',
+    'agg_historic_packed_window_latency_ms',
+  ];
 
   const lines = [];
   lines.push('=== TS Metrics ===');
-  tsEntries.sort(([a], [b]) => a.localeCompare(b)).forEach(([name, metric]) => {
-    lines.push(formatSummaryLine(name, metric));
+  tsMetricNames.forEach((name) => {
+    lines.push(formatSummaryLine(name, metricsByName[name]));
   });
 
   lines.push('');
   lines.push('=== Packed Metrics ===');
-  packedEntries.sort(([a], [b]) => a.localeCompare(b)).forEach(([name, metric]) => {
-    lines.push(formatSummaryLine(name, metric));
+  packedMetricNames.forEach((name) => {
+    lines.push(formatSummaryLine(name, metricsByName[name]));
   });
 
   lines.push('');
