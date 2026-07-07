@@ -9,7 +9,7 @@ This benchmark uses k6 plus a Go HTTP wrapper for MongoDB queries.
   - `POST /aggregate`
   - `GET /health`
 - `benchmark_k6_http.js`
-  - 6 weighted scenarios using `ramping-arrival-rate`
+  - 8 weighted scenarios using `ramping-arrival-rate`
 
 ## Current Scenario Set
 
@@ -19,19 +19,28 @@ This benchmark uses k6 plus a Go HTTP wrapper for MongoDB queries.
 4. `historic_eq_3d_1m_find` — find 3 days of 1-minute candles in `historic-eq`
 5. `historic_eq_15_30m_agg` — aggregate `historic-eq` into random 15/30-minute OHLC bins
 6. `oned_fno_1m_find` — find 1-minute candles for one F&O ID in `oned-fno` (date: 2026-06-02)
+7. `historic_eq_packed_1d_find` — find packed 1-day candles in `historic-eq-packed`
+8. `oned_fno_packed_5m_agg` — aggregate packed 1-day candles into 5-minute OHLC in `oned-fno-packed`
 
 ## Traffic Distribution
 
-Traffic is distributed by request rate:
+Traffic is distributed by request rate, separately per phase.
 
-- `oned_eq_5m_agg`: 50%
-- `oned_eq_1m_find`: 70%
+Find phase (totals 100%):
+
+- `oned_eq_1m_find`: 55%
+- `historic_eq_3d_1m_find`: 10%
+- `oned_fno_1m_find`: 25%
+- `historic_eq_packed_1d_find`: 10%
+
+Aggregate phase (totals 100%):
+
+- `oned_eq_5m_agg`: 45%
 - `historic_eq_3d_5m_agg`: 20%
-- `historic_eq_3d_1m_find`: 30%
-- `historic_eq_15_30m_agg`: 30%
-- `oned_fno_1m_find`: 20%
+- `historic_eq_15_30m_agg`: 25%
+- `oned_fno_packed_5m_agg`: 10%
 
-> Percentages are relative to `TOTAL_RPS` per scenario (scenarios run in two phases, not all summing to 100%).
+> Percentages are relative to `TOTAL_RPS` within each phase (find and aggregate run in separate phases).
 
 Rates are derived from `TOTAL_RPS`.
 
@@ -79,24 +88,31 @@ mongosh "$MONGO_URI" --quiet --eval '
   ]).toArray().map(d => d._id).join("\n")
 ' > symbols_fno.csv
 
-# Sample packed lookup from oned-eq-packed
-mongosh "$MONGO_URI" --quiet --eval '
-  db.getSiblingDB("charts").getCollection("oned-eq-packed").findOne(
-    {
-      id: "INDS01240",
-    },
-    {
-      projection: {
-        _id: 0,
-        "data.1d": 1,
-        count: 1,
-        firstTs: 1,
-        lastTs: 1
-      }
-    }
-  )
-'
 ```
+
+### 1b. Build packed collections (`flatten_coll.js`)
+
+The benchmark uses packed collections for dedicated scenarios:
+
+- `historic-eq-packed` (chunked build)
+- `oned-fno-packed` (chunked build)
+- `oned-eq-packed` (single-pass build)
+
+Run:
+
+```bash
+cd k6_mongo_ohcl
+
+# Optional: reduce chunk size for lower per-aggregate load
+CHUNK_DAYS=7 \
+mongosh "$MONGO_URI" --file ./flatten_coll.js
+```
+
+Notes:
+
+- `CHUNK_DAYS` controls chunk size for `historic-eq` and `oned-fno` flattening.
+- Smaller chunk sizes (for example `3`) reduce per-query memory pressure but increase total chunks.
+- `oned-eq` flattening is currently single-pass and writes `oned-eq-packed`.
 
 ### 2. Start wrapper
 
@@ -146,6 +162,8 @@ k6 run \
   --env RATE_STEP=1 \
   --env RATE_STEP_SECONDS=5 \
   --env MINUTES=2 \
+  --env HISTORIC_EQ_PACKED_COLLECTION=historic-eq-packed \
+  --env ONED_FNO_PACKED_COLLECTION=oned-fno-packed \
   benchmark_k6_http.js
 ```
 
@@ -184,6 +202,8 @@ API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 | `ONED_EQ_COLLECTION` | `oned-eq` | Target collection for oned_eq scenarios |
 | `HISTORIC_EQ_COLLECTION` | `historic-eq` | Target collection for historic_eq scenarios |
 | `ONED_FNO_COLLECTION` | `oned-fno` | Target collection for oned_fno scenarios |
+| `HISTORIC_EQ_PACKED_COLLECTION` | `historic-eq-packed` | Target collection for packed historic find scenario |
+| `ONED_FNO_PACKED_COLLECTION` | `oned-fno-packed` | Target collection for packed fno aggregate scenario |
 | `AGG_MIN_TS` | `2026-05-07T00:00:00Z` | Min timestamp for random agg window |
 | `AGG_MAX_TS` | `2026-06-02T00:00:00Z` | Max timestamp for random agg window |
 
@@ -191,14 +211,23 @@ API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 
 Custom metrics emitted:
 
-- `oned_eq_1m_find_latency_ms`
-- `oned_eq_5m_agg_latency_ms`
-- `historic_eq_3d_5m_agg_latency_ms`
-- `historic_eq_3d_1m_find_latency_ms`
-- `historic_eq_15_30m_agg_latency_ms`
+- `find_oned_eq_1m_latency_ms`
+- `agg_oned_eq_5m_latency_ms`
+- `agg_historic_eq_3d_5m_latency_ms`
+- `find_historic_eq_3d_1m_latency_ms`
+- `agg_historic_eq_15_30m_latency_ms`
+- `find_historic_eq_packed_1d_latency_ms`
+- `agg_oned_fno_packed_5m_latency_ms`
 - `find_errors`
 - `agg_errors`
 - `http_errors`
+
+`benchmark_k6_http.js` also defines `handleSummary()` to print custom metrics in two sections:
+
+- TS Metrics
+- Packed Metrics
+
+and writes full raw output to `summary.json`.
 
 ## Notes
 
