@@ -78,6 +78,24 @@ mongosh "$MONGO_URI" --quiet --eval '
     { $project: { cnt: 0 } }
   ]).toArray().map(d => d._id).join("\n")
 ' > symbols_fno.csv
+
+# Sample packed lookup from oned-eq-packed
+mongosh "$MONGO_URI" --quiet --eval '
+  db.getSiblingDB("charts").getCollection("oned-eq-packed").findOne(
+    {
+      id: "INDS01240",
+    },
+    {
+      projection: {
+        _id: 0,
+        "data.1d": 1,
+        count: 1,
+        firstTs: 1,
+        lastTs: 1
+      }
+    }
+  )
+'
 ```
 
 ### 2. Start wrapper

@@ -8,6 +8,7 @@
  *   4. historic_eq_3d_1m_find   — find 3 days of 1-min candles for one ID from historic-eq
  *   5. historic_eq_15_30m_agg   — aggregate historic-eq into random 15/30-min OHLC bins
  *   6. oned_fno_1m_find         — find all 1-min candles for one F&O ID from oned-fno
+ *   7. oned_eq_packed_1d_find   — find packed 1d data for one EQ ID from oned-eq-packed
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -31,6 +32,7 @@
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
  *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
  *   ONED_FNO_COLLECTION     — oned-fno collection (default: oned-fno)
+ *   ONED_EQ_PACKED_COLLECTION — oned-eq-packed collection (default: oned-eq-packed)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
  *   AGG_MAX_TS         — newest ts for agg window   (default: 2026-06-11T00:00:00Z)
  */
@@ -52,6 +54,7 @@ const MINUTES      = parseInt(__ENV.MINUTES || '2');
 const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
 const ONED_FNO_COLLECTION    = __ENV.ONED_FNO_COLLECTION    || 'oned-fno';
+const ONED_EQ_PACKED_COLLECTION = __ENV.ONED_EQ_PACKED_COLLECTION || 'oned-eq-packed';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
 const ONED_START_TS = '2026-06-03T03:45:00Z';
@@ -99,6 +102,7 @@ const SYMBOL_POOL_FNO = new SharedArray('symbols_fno', function () {
 const find1minEqLatencyMs       = new Trend('find_oned_eq_1m_latency_ms', true);
 const findHistoricLatencyMs     = new Trend('find_historic_eq_3d_1m_latency_ms', true);
 const findFnoLatencyMs          = new Trend('find_oned_fno_1m_latency_ms', true);
+const findEqPacked1dLatencyMs   = new Trend('find_oned_eq_packed_1d_latency_ms', true);
 const agg5minEqLatencyMs        = new Trend('agg_oned_eq_5m_latency_ms', true);
 const aggHistoric3d5mLatencyMs  = new Trend('agg_historic_eq_3d_5m_latency_ms', true);
 const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms', true);
@@ -107,6 +111,7 @@ const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms',
 const find1minEqCountDocs       = new Trend('find_oned_eq_1m_count', false);
 const findHistoricCountDocs     = new Trend('find_historic_eq_3d_1m_count', false);
 const findFnoCountDocs          = new Trend('find_oned_fno_1m_count', false);
+const findEqPacked1dCountDocs   = new Trend('find_oned_eq_packed_1d_count', false);
 const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
 const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
 const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
@@ -135,6 +140,7 @@ function buildRateStages(targetRate) {
 const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.60));
 const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(TOTAL_RPS * 0.30));
+const RATE_ONED_EQ_PACKED_1D_FIND = Math.max(1, Math.round(TOTAL_RPS * 0.10));
 const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.50));
 const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.20));
 const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(TOTAL_RPS * 0.30));
@@ -213,6 +219,17 @@ export const options = {
       exec:      'findFnoScenario',
       tags:      { scenario: 'oned_fno_1m_find' },
     },
+    oned_eq_packed_1d_find: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_PACKED_1D_FIND),
+      startTime: FIND_PHASE_START,
+      exec:      'findEqPacked1dScenario',
+      tags:      { scenario: 'oned_eq_packed_1d_find' },
+    },
   },
   // Surface all custom Trends in the end-of-test summary
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
@@ -230,6 +247,7 @@ export function setup() {
   console.log(`Loaded ${SYMBOL_POOL_EQ.length} symbols for oned-eq`);
   console.log(`Loaded ${SYMBOL_POOL_HISTORIC.length} symbols for historic-eq`);
   console.log(`Loaded ${SYMBOL_POOL_FNO.length} symbols for oned-fno`);
+  console.log(`Using ${ONED_EQ_PACKED_COLLECTION} with symbols from symbols_eq.csv`);
 }
 
 // ---------------------------------------------------------------------------
@@ -520,4 +538,27 @@ export function findFnoScenario() {
   };
 
   runFind(payload, findFnoLatencyMs, findFnoCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 7 — find packed 1d data for one EQ ID from oned-eq-packed
+// ---------------------------------------------------------------------------
+export function findEqPacked1dScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
+
+  const payload = {
+    collection: ONED_EQ_PACKED_COLLECTION,
+    filter: {
+      id: symbol,
+    },
+    projection: {
+      _id: 0,
+      'data.1d': 1,
+      count: 1,
+      firstTs: 1,
+      lastTs: 1,
+    },
+  };
+
+  runFind(payload, findEqPacked1dLatencyMs, findEqPacked1dCountDocs);
 }
