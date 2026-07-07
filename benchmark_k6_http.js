@@ -523,11 +523,8 @@ export function findOnedFnoPackedScenario() {
     },
     projection: {
       _id: 0,
-      id: 0,
       'data.1d': 1,
       count: 1,
-      firstTs: 1,
-      lastTs: 1,
     },
   };
 
