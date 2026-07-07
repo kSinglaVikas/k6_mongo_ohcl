@@ -475,11 +475,8 @@ export function findOnedEqPackedScenario() {
     },
     projection: {
       _id: 0,
-      id: 0,
       'data.1d': 1,
       count: 1,
-      firstTs: 0,
-      lastTs: 0,
     },
   };
 
