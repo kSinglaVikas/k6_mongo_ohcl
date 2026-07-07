@@ -2,14 +2,19 @@
  * k6 benchmark using HTTP wrapper for MongoDB queries.
  *
  * Query types in parallel:
- *   1. oned_eq_1m_find          — find all 1-min candles for one EQ ID for a date from oned-eq
- *   2. oned_eq_5m_agg           — aggregate 5-min OHLC candles for one EQ ID
- *   3. historic_eq_3d_5m_agg    — aggregate 3 days of historic-eq into 5-min OHLC bins
- *   4. historic_eq_3d_1m_find   — find 3 days of 1-min candles for one ID from historic-eq
- *   5. historic_eq_15_30m_agg   — aggregate historic-eq into random 15/30-min OHLC bins
- *   6. oned_fno_1m_find         — find all 1-min candles for one F&O ID from oned-fno
- *   7. historic_eq_packed_1d_find — find packed 1d data for one ID from historic-eq-packed
- *   8. oned_fno_packed_5m_agg   — aggregate packed 1d data into 5-min OHLC for one F&O ID
+ *   FIND phase:
+ *   1. oned_eq_ts_find         - find 1-min candles for one EQ ID from oned-eq
+ *   2. oned_eq_packed_find     - find packed 1d data for one EQ ID from oned-eq-packed
+ *   3. oned_fno_ts_find        - find 1-min candles for one F&O ID from oned-fno
+ *   4. oned_fno_packed_find    - find packed 1d data for one F&O ID from oned-fno-packed
+ *
+ *   AGG phase:
+ *   5. oned_eq_ts_5m_agg       - aggregate 5-min OHLC for one EQ ID from oned-eq
+ *   6. oned_eq_packed_5m_agg   - aggregate 5-min OHLC for one EQ ID from oned-eq-packed
+ *   7. oned_fno_ts_5m_agg      - aggregate 5-min OHLC for one F&O ID from oned-fno
+ *   8. oned_fno_packed_5m_agg  - aggregate 5-min OHLC for one F&O ID from oned-fno-packed
+ *   9. historic_ts_window_agg  - aggregate historic-eq in random 5-30 day windows at 5/15/30-min bins
+ *  10. historic_packed_window_agg - aggregate historic-eq-packed in random 5-30 day windows at 5/15/30-min bins
  *
  * Prerequisites:
  *   1. Build and run the Go wrapper service:
@@ -33,10 +38,13 @@
  *   RATE_STEP_SECONDS  — seconds per rate step         (default: 5)
  *   MINUTES            — duration of each scenario  (default: 2)
  *   ONED_EQ_COLLECTION      — oned-eq collection (default: oned-eq)
+ *   ONED_EQ_PACKED_COLLECTION — oned-eq-packed collection (default: oned-eq-packed)
  *   HISTORIC_EQ_COLLECTION  — historic-eq collection (default: historic-eq)
- *   ONED_FNO_COLLECTION     — oned-fno collection (default: oned-fno)
  *   HISTORIC_EQ_PACKED_COLLECTION — historic-eq-packed collection (default: historic-eq-packed)
+ *   ONED_FNO_COLLECTION     — oned-fno collection (default: oned-fno)
  *   ONED_FNO_PACKED_COLLECTION — oned-fno-packed collection (default: oned-fno-packed)
+ *   HIST_WINDOW_MIN_DAYS — minimum historic window in days (default: 5)
+ *   HIST_WINDOW_MAX_DAYS — maximum historic window in days (default: 30)
  *   AGG_MIN_TS         — oldest ts for agg window   (default: 2024-01-01T00:00:00Z)
  *   AGG_MAX_TS         — newest ts for agg window   (default: 2026-06-11T00:00:00Z)
  */
@@ -58,9 +66,10 @@ const RATE_STEP    = parseInt(__ENV.RATE_STEP || '1');
 const RATE_STEP_SECONDS = parseInt(__ENV.RATE_STEP_SECONDS || '5');
 const MINUTES      = parseInt(__ENV.MINUTES || '2');
 const ONED_EQ_COLLECTION     = __ENV.ONED_EQ_COLLECTION     || 'oned-eq';
+const ONED_EQ_PACKED_COLLECTION = __ENV.ONED_EQ_PACKED_COLLECTION || 'oned-eq-packed';
 const HISTORIC_EQ_COLLECTION = __ENV.HISTORIC_EQ_COLLECTION || 'historic-eq';
-const ONED_FNO_COLLECTION    = __ENV.ONED_FNO_COLLECTION    || 'oned-fno';
 const HISTORIC_EQ_PACKED_COLLECTION = __ENV.HISTORIC_EQ_PACKED_COLLECTION || 'historic-eq-packed';
+const ONED_FNO_COLLECTION    = __ENV.ONED_FNO_COLLECTION    || 'oned-fno';
 const ONED_FNO_PACKED_COLLECTION = __ENV.ONED_FNO_PACKED_COLLECTION || 'oned-fno-packed';
 
 // Fixed date window used by the find phase (mirrors the Python hardcode)
@@ -74,9 +83,8 @@ const FNO_END_TS    = '2026-06-02T10:00:00Z';
 // Timestamp range for aggregate random windows (supply via env for accuracy)
 const AGG_MIN_TS = __ENV.AGG_MIN_TS || '2023-03-20T00:00:00Z';
 const AGG_MAX_TS = __ENV.AGG_MAX_TS || '2023-05-05T00:00:00Z';
-
-const HISTORIC_3D_START_TS   = __ENV.HISTORIC_3D_START_TS   || AGG_MIN_TS;
-const HISTORIC_3D_END_TS     = __ENV.HISTORIC_3D_END_TS     || new Date(new Date(AGG_MIN_TS).getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
+const HIST_WINDOW_MIN_DAYS = parseInt(__ENV.HIST_WINDOW_MIN_DAYS || '5');
+const HIST_WINDOW_MAX_DAYS = parseInt(__ENV.HIST_WINDOW_MAX_DAYS || '30');
 
 function parseSymbolsCsv(content) {
   const symbols = content
@@ -106,24 +114,28 @@ const SYMBOL_POOL_FNO = new SharedArray('symbols_fno', function () {
 // Prefixed with find_/agg_ to control sort order in summary (finds first)
 // ---------------------------------------------------------------------------
 // Latency trends
-const find1minEqLatencyMs       = new Trend('find_oned_eq_1m_latency_ms', true);
-const findHistoricLatencyMs     = new Trend('find_historic_eq_3d_1m_latency_ms', true);
-const findFnoLatencyMs          = new Trend('find_oned_fno_1m_latency_ms', true);
-const findHistoricPacked1dLatencyMs = new Trend('find_historic_eq_packed_1d_latency_ms', true);
-const agg5minEqLatencyMs        = new Trend('agg_oned_eq_5m_latency_ms', true);
-const aggFnoPacked5mLatencyMs   = new Trend('agg_oned_fno_packed_5m_latency_ms', true);
-const aggHistoric3d5mLatencyMs  = new Trend('agg_historic_eq_3d_5m_latency_ms', true);
-const aggHistoricLatencyMs      = new Trend('agg_historic_eq_15_30m_latency_ms', true);
+const findOnedEqTsLatencyMs            = new Trend('find_oned_eq_ts_latency_ms', true);
+const findOnedEqPackedLatencyMs        = new Trend('find_oned_eq_packed_latency_ms', true);
+const findOnedFnoTsLatencyMs           = new Trend('find_oned_fno_ts_latency_ms', true);
+const findOnedFnoPackedLatencyMs       = new Trend('find_oned_fno_packed_latency_ms', true);
+const aggOnedEqTs5mLatencyMs           = new Trend('agg_oned_eq_ts_5m_latency_ms', true);
+const aggOnedEqPacked5mLatencyMs       = new Trend('agg_oned_eq_packed_5m_latency_ms', true);
+const aggOnedFnoTs5mLatencyMs          = new Trend('agg_oned_fno_ts_5m_latency_ms', true);
+const aggOnedFnoPacked5mLatencyMs      = new Trend('agg_oned_fno_packed_5m_latency_ms', true);
+const aggHistoricTsWindowLatencyMs     = new Trend('agg_historic_ts_window_latency_ms', true);
+const aggHistoricPackedWindowLatencyMs = new Trend('agg_historic_packed_window_latency_ms', true);
 
 // Count trends (documents returned)
-const find1minEqCountDocs       = new Trend('find_oned_eq_1m_count', false);
-const findHistoricCountDocs     = new Trend('find_historic_eq_3d_1m_count', false);
-const findFnoCountDocs          = new Trend('find_oned_fno_1m_count', false);
-const findHistoricPacked1dCountDocs = new Trend('find_historic_eq_packed_1d_count', false);
-const agg5minEqCountDocs        = new Trend('agg_oned_eq_5m_count', false);
-const aggFnoPacked5mCountDocs   = new Trend('agg_oned_fno_packed_5m_count', false);
-const aggHistoric3d5mCountDocs  = new Trend('agg_historic_eq_3d_5m_count', false);
-const aggHistoricCountDocs      = new Trend('agg_historic_eq_15_30m_count', false);
+const findOnedEqTsCountDocs            = new Trend('find_oned_eq_ts_count', false);
+const findOnedEqPackedCountDocs        = new Trend('find_oned_eq_packed_count', false);
+const findOnedFnoTsCountDocs           = new Trend('find_oned_fno_ts_count', false);
+const findOnedFnoPackedCountDocs       = new Trend('find_oned_fno_packed_count', false);
+const aggOnedEqTs5mCountDocs           = new Trend('agg_oned_eq_ts_5m_count', false);
+const aggOnedEqPacked5mCountDocs       = new Trend('agg_oned_eq_packed_5m_count', false);
+const aggOnedFnoTs5mCountDocs          = new Trend('agg_oned_fno_ts_5m_count', false);
+const aggOnedFnoPacked5mCountDocs      = new Trend('agg_oned_fno_packed_5m_count', false);
+const aggHistoricTsWindowCountDocs     = new Trend('agg_historic_ts_window_count', false);
+const aggHistoricPackedWindowCountDocs = new Trend('agg_historic_packed_window_count', false);
 
 const findErrors                = new Counter('find_errors');
 const aggErrors                 = new Counter('agg_errors');
@@ -146,17 +158,19 @@ function buildRateStages(targetRate) {
   ];
 }
 
-// Find phase split (totals 100%): 55 + 10 + 25 + 10
-const RATE_ONED_EQ_1M_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.55));
-const RATE_HIST_EQ_3D_1M_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
-const RATE_ONED_FNO_1M_FIND   = Math.max(1, Math.round(FIND_PHASE_RPS * 0.25));
-const RATE_HIST_EQ_PACKED_1D_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.10));
+// Find phase split (totals 100%): 35 + 15 + 35 + 15
+const RATE_ONED_EQ_TS_FIND      = Math.max(1, Math.round(FIND_PHASE_RPS * 0.35));
+const RATE_ONED_EQ_PACKED_FIND  = Math.max(1, Math.round(FIND_PHASE_RPS * 0.15));
+const RATE_ONED_FNO_TS_FIND     = Math.max(1, Math.round(FIND_PHASE_RPS * 0.35));
+const RATE_ONED_FNO_PACKED_FIND = Math.max(1, Math.round(FIND_PHASE_RPS * 0.15));
 
-// Aggregate phase split (totals 100%): 45 + 10 + 20 + 25
-const RATE_ONED_EQ_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.45));
-const RATE_ONED_FNO_PACKED_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.10));
-const RATE_HIST_EQ_3D_5M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
-const RATE_HIST_EQ_15_30M_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.25));
+// Aggregate phase split (totals 100%): 20 + 15 + 20 + 15 + 15 + 15
+const RATE_ONED_EQ_TS_5M_AGG         = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
+const RATE_ONED_EQ_PACKED_5M_AGG     = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
+const RATE_ONED_FNO_TS_5M_AGG        = Math.max(1, Math.round(AGG_PHASE_RPS * 0.20));
+const RATE_ONED_FNO_PACKED_5M_AGG    = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
+const RATE_HISTORIC_TS_WINDOW_AGG    = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
+const RATE_HISTORIC_PACKED_WINDOW_AGG = Math.max(1, Math.round(AGG_PHASE_RPS * 0.15));
 const PHASE_DURATION_SECONDS = Math.max(Math.floor(MINUTES * 60), 1);
 const FIND_PHASE_START = '0s';
 const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
@@ -166,27 +180,82 @@ const AGG_PHASE_START = `${PHASE_DURATION_SECONDS}s`;
 // ---------------------------------------------------------------------------
 export const options = {
   scenarios: {
-    oned_eq_1m_find: {
+    oned_eq_ts_find: {
       executor:  'ramping-arrival-rate',
       startRate: 0,
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_ONED_EQ_1M_FIND),
+      stages:    buildRateStages(RATE_ONED_EQ_TS_FIND),
       startTime: FIND_PHASE_START,
-      exec:      'find1minEqScenario',
-      tags:      { scenario: 'oned_eq_1m_find' },
+      exec:      'findOnedEqTsScenario',
+      tags:      { scenario: 'oned_eq_ts_find' },
     },
-    oned_eq_5m_agg: {
+    oned_eq_packed_find: {
       executor:  'ramping-arrival-rate',
       startRate: 0,
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_ONED_EQ_5M_AGG),
+      stages:    buildRateStages(RATE_ONED_EQ_PACKED_FIND),
+      startTime: FIND_PHASE_START,
+      exec:      'findOnedEqPackedScenario',
+      tags:      { scenario: 'oned_eq_packed_find' },
+    },
+    oned_fno_ts_find: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_FNO_TS_FIND),
+      startTime: FIND_PHASE_START,
+      exec:      'findOnedFnoTsScenario',
+      tags:      { scenario: 'oned_fno_ts_find' },
+    },
+    oned_fno_packed_find: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_FNO_PACKED_FIND),
+      startTime: FIND_PHASE_START,
+      exec:      'findOnedFnoPackedScenario',
+      tags:      { scenario: 'oned_fno_packed_find' },
+    },
+    oned_eq_ts_5m_agg: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_TS_5M_AGG),
       startTime: AGG_PHASE_START,
-      exec:      'agg5minEqScenario',
-      tags:      { scenario: 'oned_eq_5m_agg' },
+      exec:      'aggOnedEqTs5mScenario',
+      tags:      { scenario: 'oned_eq_ts_5m_agg' },
+    },
+    oned_eq_packed_5m_agg: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_EQ_PACKED_5M_AGG),
+      startTime: AGG_PHASE_START,
+      exec:      'aggOnedEqPacked5mScenario',
+      tags:      { scenario: 'oned_eq_packed_5m_agg' },
+    },
+    oned_fno_ts_5m_agg: {
+      executor:  'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit:  '1s',
+      preAllocatedVUs: PREALLOCATED_VUS,
+      maxVUs: MAX_VUS,
+      stages:    buildRateStages(RATE_ONED_FNO_TS_5M_AGG),
+      startTime: AGG_PHASE_START,
+      exec:      'aggOnedFnoTs5mScenario',
+      tags:      { scenario: 'oned_fno_ts_5m_agg' },
     },
     oned_fno_packed_5m_agg: {
       executor:  'ramping-arrival-rate',
@@ -196,63 +265,30 @@ export const options = {
       maxVUs: MAX_VUS,
       stages:    buildRateStages(RATE_ONED_FNO_PACKED_5M_AGG),
       startTime: AGG_PHASE_START,
-      exec:      'aggFnoPacked5mScenario',
+      exec:      'aggOnedFnoPacked5mScenario',
       tags:      { scenario: 'oned_fno_packed_5m_agg' },
     },
-    historic_eq_3d_5m_agg: {
+    historic_ts_window_agg: {
       executor:  'ramping-arrival-rate',
       startRate: 0,
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_3D_5M_AGG),
+      stages:    buildRateStages(RATE_HISTORIC_TS_WINDOW_AGG),
       startTime: AGG_PHASE_START,
-      exec:      'aggHistoric3d5mScenario',
-      tags:      { scenario: 'historic_eq_3d_5m_agg' },
+      exec:      'aggHistoricTsWindowScenario',
+      tags:      { scenario: 'historic_ts_window_agg' },
     },
-    historic_eq_3d_1m_find: {
+    historic_packed_window_agg: {
       executor:  'ramping-arrival-rate',
       startRate: 0,
       timeUnit:  '1s',
       preAllocatedVUs: PREALLOCATED_VUS,
       maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_3D_1M_FIND),
-      startTime: FIND_PHASE_START,
-      exec:      'findHistoricScenario',
-      tags:      { scenario: 'historic_eq_3d_1m_find' },
-    },
-    historic_eq_15_30m_agg: {
-      executor:  'ramping-arrival-rate',
-      startRate: 0,
-      timeUnit:  '1s',
-      preAllocatedVUs: PREALLOCATED_VUS,
-      maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_15_30M_AGG),
+      stages:    buildRateStages(RATE_HISTORIC_PACKED_WINDOW_AGG),
       startTime: AGG_PHASE_START,
-      exec:      'aggHistoricScenario',
-      tags:      { scenario: 'historic_eq_15_30m_agg' },
-    },
-    oned_fno_1m_find: {
-      executor:  'ramping-arrival-rate',
-      startRate: 0,
-      timeUnit:  '1s',
-      preAllocatedVUs: PREALLOCATED_VUS,
-      maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_ONED_FNO_1M_FIND),
-      startTime: FIND_PHASE_START,
-      exec:      'findFnoScenario',
-      tags:      { scenario: 'oned_fno_1m_find' },
-    },
-    historic_eq_packed_1d_find: {
-      executor:  'ramping-arrival-rate',
-      startRate: 0,
-      timeUnit:  '1s',
-      preAllocatedVUs: PREALLOCATED_VUS,
-      maxVUs: MAX_VUS,
-      stages:    buildRateStages(RATE_HIST_EQ_PACKED_1D_FIND),
-      startTime: FIND_PHASE_START,
-      exec:      'findHistoricPacked1dScenario',
-      tags:      { scenario: 'historic_eq_packed_1d_find' },
+      exec:      'aggHistoricPackedWindowScenario',
+      tags:      { scenario: 'historic_packed_window_agg' },
     },
   },
   // Surface all custom Trends in the end-of-test summary
@@ -271,6 +307,7 @@ export function setup() {
   console.log(`Loaded ${SYMBOL_POOL_EQ.length} symbols for oned-eq`);
   console.log(`Loaded ${SYMBOL_POOL_HISTORIC.length} symbols for historic-eq`);
   console.log(`Loaded ${SYMBOL_POOL_FNO.length} symbols for oned-fno`);
+  console.log(`Using packed collection ${ONED_EQ_PACKED_COLLECTION} with symbols_eq.csv`);
   console.log(`Using packed collection ${HISTORIC_EQ_PACKED_COLLECTION} with symbols_historic.csv`);
   console.log(`Using packed collection ${ONED_FNO_PACKED_COLLECTION} with symbols_fno.csv`);
 }
@@ -282,22 +319,22 @@ function randomChoice(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/**
- * Pick a random [start, end) window of (binSizeMinutes * [40..200] bins) inside
- * [minTs, maxTs].  Mirrors _pick_random_window() from the Python script.
- */
-function pickRandomWindow(minIso, maxIso, binSizeMinutes) {
+function pickRandomWindowByDays(minIso, maxIso, minDays, maxDays) {
   const minTs = new Date(minIso);
   const maxTs = new Date(maxIso);
-  const totalMs      = Math.max(maxTs - minTs, 1);
-  const binsInWindow = 40 + Math.floor(Math.random() * 161); // [40, 200]
-  const windowMs     = binSizeMinutes * 60 * 1000 * binsInWindow;
+  const totalMs = Math.max(maxTs - minTs, 1);
+  const safeMinDays = Math.max(1, minDays);
+  const safeMaxDays = Math.max(safeMinDays, maxDays);
+  const randomDays = safeMinDays + Math.floor(Math.random() * (safeMaxDays - safeMinDays + 1));
+  const windowMs = randomDays * 24 * 60 * 60 * 1000;
+
   if (totalMs <= windowMs) {
     return [minIso, maxIso];
   }
+
   const offsetMs = Math.random() * (totalMs - windowMs);
-  const startTs  = new Date(minTs.getTime() + offsetMs);
-  const endTs    = new Date(startTs.getTime() + windowMs);
+  const startTs = new Date(minTs.getTime() + offsetMs);
+  const endTs = new Date(startTs.getTime() + windowMs);
   return [startTs.toISOString(), endTs.toISOString()];
 }
 
@@ -360,9 +397,9 @@ function runAggregate(payload, latencyTrend, countTrend) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 1 — find all 1-min candles for one EQ ID
+// Scenario 1 — find all 1-min candles for one EQ ID from oned-eq
 // ---------------------------------------------------------------------------
-export function find1minEqScenario() {
+export function findOnedEqTsScenario() {
   const symbol = randomChoice(SYMBOL_POOL_EQ);
 
   const payload = {
@@ -383,14 +420,90 @@ export function find1minEqScenario() {
     },
   };
 
-  runFind(payload, find1minEqLatencyMs, find1minEqCountDocs);
+  runFind(payload, findOnedEqTsLatencyMs, findOnedEqTsCountDocs);
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 2 — aggregate 5-min OHLC candles for one EQ ID
+// Scenario 2 — find packed 1d data for one EQ ID from oned-eq-packed
 // ---------------------------------------------------------------------------
-export function agg5minEqScenario() {
+export function findOnedEqPackedScenario() {
   const symbol = randomChoice(SYMBOL_POOL_EQ);
+
+  const payload = {
+    collection: ONED_EQ_PACKED_COLLECTION,
+    filter: {
+      id: symbol,
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+      'data.1d': 1,
+      count: 1,
+      firstTs: 1,
+      lastTs: 1,
+    },
+  };
+
+  runFind(payload, findOnedEqPackedLatencyMs, findOnedEqPackedCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 3 — find all 1-min candles for one F&O ID from oned-fno
+// ---------------------------------------------------------------------------
+export function findOnedFnoTsScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_FNO);
+
+  const payload = {
+    collection: ONED_FNO_COLLECTION,
+    filter: {
+      id: symbol,
+      ts: {
+        $gte: FNO_START_TS,
+        $lte: FNO_END_TS,
+      },
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+    },
+    sort: {
+      ts: 1,
+    },
+  };
+
+  runFind(payload, findOnedFnoTsLatencyMs, findOnedFnoTsCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4 — find packed 1d data for one F&O ID from oned-fno-packed
+// ---------------------------------------------------------------------------
+export function findOnedFnoPackedScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_FNO);
+
+  const payload = {
+    collection: ONED_FNO_PACKED_COLLECTION,
+    filter: {
+      id: symbol,
+    },
+    projection: {
+      _id: 0,
+      id: 0,
+      'data.1d': 1,
+      count: 1,
+      firstTs: 1,
+      lastTs: 1,
+    },
+  };
+
+  runFind(payload, findOnedFnoPackedLatencyMs, findOnedFnoPackedCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 5 — aggregate 5-min OHLC candles for one EQ ID from oned-eq
+// ---------------------------------------------------------------------------
+export function aggOnedEqTs5mScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
+
   const payload = {
     collection: ONED_EQ_COLLECTION,
     pipeline: [
@@ -424,23 +537,86 @@ export function agg5minEqScenario() {
     ],
   };
 
-  runAggregate(payload, agg5minEqLatencyMs, agg5minEqCountDocs);
+  runAggregate(payload, aggOnedEqTs5mLatencyMs, aggOnedEqTs5mCountDocs);
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 3 — aggregate 3 days of historic-eq into 5-min OHLC bins
+// Scenario 6 — aggregate 5-min OHLC candles for one EQ ID from oned-eq-packed
 // ---------------------------------------------------------------------------
-export function aggHistoric3d5mScenario() {
-  const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
+export function aggOnedEqPacked5mScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_EQ);
+
   const payload = {
-    collection: HISTORIC_EQ_COLLECTION,
+    collection: ONED_EQ_PACKED_COLLECTION,
+    pipeline: [
+      {
+        $match: {
+          id: symbol,
+        },
+      },
+      {
+        $unwind: '$data.1d',
+      },
+      {
+        $addFields: {
+          candleTs: {
+            $convert: {
+              input: '$data.1d.ts',
+              to: 'date',
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          candleTs: {
+            $ne: null,
+            $gte: ONED_START_TS,
+            $lt: ONED_END_TS,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$candleTs',
+              unit: 'minute',
+              binSize: 5,
+            },
+          },
+          o: { $first: '$data.1d.o' },
+          h: { $max: '$data.1d.h' },
+          l: { $min: '$data.1d.l' },
+          c: { $last: '$data.1d.c' },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ],
+  };
+
+  runAggregate(payload, aggOnedEqPacked5mLatencyMs, aggOnedEqPacked5mCountDocs);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 7 — aggregate 5-min OHLC candles for one F&O ID from oned-fno
+// ---------------------------------------------------------------------------
+export function aggOnedFnoTs5mScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_FNO);
+
+  const payload = {
+    collection: ONED_FNO_COLLECTION,
     pipeline: [
       {
         $match: {
           id: symbol,
           ts: {
-            $gte: HISTORIC_3D_START_TS,
-            $lt: HISTORIC_3D_END_TS,
+            $gte: FNO_START_TS,
+            $lte: FNO_END_TS,
           },
         },
       },
@@ -465,42 +641,78 @@ export function aggHistoric3d5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoric3d5mLatencyMs, aggHistoric3d5mCountDocs);
+  runAggregate(payload, aggOnedFnoTs5mLatencyMs, aggOnedFnoTs5mCountDocs);
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4 — find 3 days of 1-min candles for one ID from historic-eq
+// Scenario 8 — aggregate 5-min OHLC candles for one F&O ID from oned-fno-packed
 // ---------------------------------------------------------------------------
-export function findHistoricScenario() {
-  const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
+export function aggOnedFnoPacked5mScenario() {
+  const symbol = randomChoice(SYMBOL_POOL_FNO);
+
   const payload = {
-    collection: HISTORIC_EQ_COLLECTION,
-    filter: {
-      id: symbol,
-      ts: {
-        $gte: HISTORIC_3D_START_TS,
-        $lt: HISTORIC_3D_END_TS,
+    collection: ONED_FNO_PACKED_COLLECTION,
+    pipeline: [
+      {
+        $match: {
+          id: symbol,
+        },
       },
-    },
-    projection: {
-      _id: 0,
-      id: 0,
-    },
-    sort: {
-      ts: 1,
-    },
+      {
+        $unwind: '$data.1d',
+      },
+      {
+        $addFields: {
+          candleTs: {
+            $convert: {
+              input: '$data.1d.ts',
+              to: 'date',
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          candleTs: {
+            $ne: null,
+            $gte: FNO_START_TS,
+            $lte: FNO_END_TS,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$candleTs',
+              unit: 'minute',
+              binSize: 5,
+            },
+          },
+          o: { $first: '$data.1d.o' },
+          h: { $max: '$data.1d.h' },
+          l: { $min: '$data.1d.l' },
+          c: { $last: '$data.1d.c' },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ],
   };
 
-  runFind(payload, findHistoricLatencyMs, findHistoricCountDocs);
+  runAggregate(payload, aggOnedFnoPacked5mLatencyMs, aggOnedFnoPacked5mCountDocs);
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 5 — aggregate historic-eq into random 15/30-min OHLC bins
+// Scenario 9 — aggregate historic-eq in random 5-30 day windows at 5/15/30-min bins
 // ---------------------------------------------------------------------------
-export function aggHistoricScenario() {
+export function aggHistoricTsWindowScenario() {
   const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
-  const binSize = randomChoice([15, 30]);
-  const [startTs, endTs] = pickRandomWindow(AGG_MIN_TS, AGG_MAX_TS, binSize);
+  const binSize = randomChoice([5, 15, 30]);
+  const [startTs, endTs] = pickRandomWindowByDays(AGG_MIN_TS, AGG_MAX_TS, HIST_WINDOW_MIN_DAYS, HIST_WINDOW_MAX_DAYS);
 
   const payload = {
     collection: HISTORIC_EQ_COLLECTION,
@@ -535,67 +747,19 @@ export function aggHistoricScenario() {
     ],
   };
 
-  runAggregate(payload, aggHistoricLatencyMs, aggHistoricCountDocs);
+  runAggregate(payload, aggHistoricTsWindowLatencyMs, aggHistoricTsWindowCountDocs);
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 6 — find all 1-min candles for one F&O ID from oned-fno
+// Scenario 10 — aggregate historic-eq-packed in random 5-30 day windows at 5/15/30-min bins
 // ---------------------------------------------------------------------------
-export function findFnoScenario() {
-  const symbol = randomChoice(SYMBOL_POOL_FNO);
-
-  const payload = {
-    collection: ONED_FNO_COLLECTION,
-    filter: {
-      id: symbol,
-      ts: {
-        $gte: FNO_START_TS,
-        $lte: FNO_END_TS,
-      },
-    },
-    projection: {
-      _id: 0,
-      id: 0,
-    },
-    sort: {
-      ts: 1,
-    },
-  };
-
-  runFind(payload, findFnoLatencyMs, findFnoCountDocs);
-}
-
-// ---------------------------------------------------------------------------
-// Scenario 7 — find packed 1d data for one ID from historic-eq-packed
-// ---------------------------------------------------------------------------
-export function findHistoricPacked1dScenario() {
+export function aggHistoricPackedWindowScenario() {
   const symbol = randomChoice(SYMBOL_POOL_HISTORIC);
+  const binSize = randomChoice([5, 15, 30]);
+  const [startTs, endTs] = pickRandomWindowByDays(AGG_MIN_TS, AGG_MAX_TS, HIST_WINDOW_MIN_DAYS, HIST_WINDOW_MAX_DAYS);
 
   const payload = {
     collection: HISTORIC_EQ_PACKED_COLLECTION,
-    filter: {
-      id: symbol,
-    },
-    projection: {
-      _id: 0,
-      'data.1d': 1,
-      count: 1,
-      firstTs: 1,
-      lastTs: 1,
-    },
-  };
-
-  runFind(payload, findHistoricPacked1dLatencyMs, findHistoricPacked1dCountDocs);
-}
-
-// ---------------------------------------------------------------------------
-// Scenario 8 — aggregate packed 1d data into 5-min OHLC for one F&O ID
-// ---------------------------------------------------------------------------
-export function aggFnoPacked5mScenario() {
-  const symbol = randomChoice(SYMBOL_POOL_FNO);
-
-  const payload = {
-    collection: ONED_FNO_PACKED_COLLECTION,
     pipeline: [
       {
         $match: {
@@ -606,12 +770,33 @@ export function aggFnoPacked5mScenario() {
         $unwind: '$data.1d',
       },
       {
+        $addFields: {
+          candleTs: {
+            $convert: {
+              input: '$data.1d.ts',
+              to: 'date',
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          candleTs: {
+            $ne: null,
+            $gte: startTs,
+            $lt: endTs,
+          },
+        },
+      },
+      {
         $group: {
           _id: {
             $dateTrunc: {
-              date: '$data.1d.ts',
+              date: '$candleTs',
               unit: 'minute',
-              binSize: 5,
+              binSize: binSize,
             },
           },
           o: { $first: '$data.1d.o' },
@@ -626,7 +811,7 @@ export function aggFnoPacked5mScenario() {
     ],
   };
 
-  runAggregate(payload, aggFnoPacked5mLatencyMs, aggFnoPacked5mCountDocs);
+  runAggregate(payload, aggHistoricPackedWindowLatencyMs, aggHistoricPackedWindowCountDocs);
 }
 
 function formatSummaryLine(name, metric) {
