@@ -23,10 +23,10 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-API_BASE_URL=${API_BASE_URL:-http://localhost:9000}
+API_BASE_URL=${API_BASE_URL:-http://localhost:9010}
 MINUTES=${MINUTES:-1}
 PREALLOCATED_VUS=${PREALLOCATED_VUS:-50}
-MAX_VUS=${MAX_VUS:-1500}
+MAX_VUS=${MAX_VUS:-2500}
 ONED_EQ_PACKED_COLLECTION=${ONED_EQ_PACKED_COLLECTION:-oned-eq-packed}
 
 if [ "$#" -gt 0 ]; then
@@ -47,6 +47,11 @@ if ! curl -s "${API_BASE_URL}/health" >/dev/null 2>&1; then
     exit 1
 fi
 echo "✅ API is ready"
+
+if [ "$API_BASE_URL" = "http://localhost:9000" ]; then
+    echo "⚠️ API_BASE_URL is set to single wrapper port 9000; load will not be distributed across workers."
+    echo "   Use API_BASE_URL=http://localhost:9010 for Nginx load balancing."
+fi
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUT_DIR=".logs/packed-find-rps-sweep-${TIMESTAMP}"
