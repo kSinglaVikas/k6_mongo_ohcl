@@ -74,7 +74,7 @@ for rps in "${RPS_VALUES[@]}"; do
     echo "▶ Running RPS=${rps} for ${MINUTES} minute(s)"
     LOG_FILE="${OUT_DIR}/rps_${rps}.log"
 
-k6 run -q --no-progress --summary-mode=compact \
+k6 run -q --summary-mode=compact \
       --env API_BASE_URL="${API_BASE_URL}" \
       --env RPS="${rps}" \
       --env MINUTES="${MINUTES}" \
