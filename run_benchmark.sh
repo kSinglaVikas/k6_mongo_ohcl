@@ -12,7 +12,7 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-API_BASE_URL=${API_BASE_URL:-http://localhost:9000}
+API_BASE_URL=${API_BASE_URL:-http://localhost:9010}
 
 # Check that k6 is installed
 if ! command -v k6 &> /dev/null; then

@@ -1,71 +1,64 @@
-# EC2 Setup Guide
+# EC2 Setup Guide (Docker + k3d + k6)
 
-This guide provides step-by-step instructions to set up the k6 MongoDB benchmark on AWS EC2.
+This guide sets up the benchmark stack on EC2 with:
 
-## Quick Start (Automated)
+- Docker
+- k3d (local k3s in Docker)
+- kubectl
+- k6
+- 10 wrapper containers exposed as one service at http://localhost:9010
 
-```bash
-bash ec2-setup.sh
-```
-
-## Manual Setup (Step-by-Step)
-
-### 1. Update System Packages
+## 1. Install Base Tools
 
 ```bash
 sudo yum update -y
+sudo yum install -y git curl tar gzip
 ```
 
-### 2. Install Go 1.21+
+## 2. Install Docker
 
 ```bash
-GO_VERSION="1.21.0"
-cd /tmp
-wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
-rm go${GO_VERSION}.linux-amd64.tar.gz
-
-# Add Go to PATH
-echo "export PATH=\$PATH:/usr/local/go/bin:\$HOME/go/bin" >> ~/.bashrc
-source ~/.bashrc
-
-# Verify
-go version
+sudo yum install -y docker
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker $USER
 ```
 
-### 3. Install k6
+Log out and log back in once so docker group permissions apply.
+
+Verify:
+
+```bash
+docker version
+```
+
+## 3. Install kubectl
+
+```bash
+KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+
+kubectl version --client
+```
+
+## 4. Install k3d
+
+```bash
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+k3d version
+```
+
+## 5. Install k6
 
 ```bash
 sudo yum install -y https://dl.k6.io/rpm/repo.rpm
 sudo yum install -y k6
-
-# Verify
 k6 version
 ```
 
-### 4. Install Git
-
-```bash
-sudo yum install -y git
-```
-
-### 5. Install curl (for health checks)
-
-```bash
-sudo yum install -y curl
-```
-
-### 6. Install Nginx (for multi-worker load balancing)
-
-```bash
-sudo yum install -y nginx
-
-# Verify
-nginx -v
-```
-
-### 7. Clone the Repository
+## 6. Clone Repository
 
 ```bash
 cd ~
@@ -73,129 +66,114 @@ git clone <your-repo-url>
 cd k6_mongo_ohcl
 ```
 
-### 8. Build the MongoDB Wrapper
+## 7. Configure MongoDB URI
 
-```bash
-(cd app && go build -o ../mongo_wrapper .)
-```
-
-This automatically downloads:
-- `go.mongodb.org/mongo-driver v1.15.0`
-- Other required dependencies
-
-### 9. Set MongoDB Connection
+Set in shell:
 
 ```bash
 export MONGO_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
 ```
 
-Or for local MongoDB:
-```bash
-export MONGO_URI="mongodb://localhost:27017"
-```
-
-### 10. Run the Wrapper (Terminal 1)
+Or store in .env:
 
 ```bash
-PORT=9000 ./mongo_wrapper
+echo 'MONGO_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"' >> .env
 ```
 
-Expected output:
-```
-Connection pool config: min=10, max=100
-Connected to MongoDB: mongodb+srv://... / ohcl_data (pool: 10-100)
-Starting HTTP server on :9000
-```
+## 8. Start 10 Wrapper Containers on k3d
 
-### 11. Run the Benchmark (Terminal 2)
+This script will:
+
+- build app image from app/Dockerfile
+- create k3d cluster (if needed)
+- import image into k3d
+- deploy Kubernetes manifests
+- run 10 pods
+- expose service on localhost:9010
 
 ```bash
-k6 run \
-  --env API_BASE_URL=http://localhost:9000 \
-  --env USERS=20 \
-  --env MINUTES=2 \
-  --env FIND_WAIT_MS=1 \
-  --env AGG_WAIT_MS=10 \
-  benchmarks/benchmark_k6_http.js
+./start_k3d_wrapper_service.sh 10
 ```
 
-## Environment Variables
+Check status:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection string |
-| `DB_NAME` | `ohcl_data` | Database name |
-| `FIND_COLLECTION` | `1d_stocks` | Collection for find queries |
-| `AGG_COLLECTION` | `7d_stocks` | Collection for aggregation |
-| `MIN_POOL_SIZE` | `10` | Min connection pool size |
-| `MAX_POOL_SIZE` | `100` | Max connection pool size |
-| `PORT` | `8080` | HTTP wrapper listen port |
-| `API_BASE_URL` | `http://localhost:9000` | k6 wrapper URL |
-| `USERS` | `20` | Virtual users per scenario |
-| `MINUTES` | `2` | Duration of each scenario |
-| `FIND_WAIT_MS` | `1` | Sleep after each find query (ms) |
-| `AGG_WAIT_MS` | `10` | Sleep after each aggregation (ms) |
+```bash
+kubectl -n benchmark get pods -o wide
+kubectl -n benchmark get svc mongo-wrapper
+curl http://localhost:9010/health
+```
+
+## 9. Run Benchmark Against Service
+
+```bash
+API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
+```
+
+Or packed-find sweep:
+
+```bash
+./run_oned_eq_packed_find_rps_sweep.sh 1000
+```
+
+## 10. Stop Stack
+
+Remove workload only:
+
+```bash
+./stop_k3d_wrapper_service.sh
+```
+
+Remove workload and delete cluster:
+
+```bash
+DESTROY_CLUSTER=1 ./stop_k3d_wrapper_service.sh
+```
+
+## Files Added for Containerized Deployment
+
+- app/Dockerfile
+- deploy/k8s/namespace.yaml
+- deploy/k8s/wrapper-configmap.yaml
+- deploy/k8s/wrapper-deployment.yaml
+- deploy/k8s/wrapper-service.yaml
+- start_k3d_wrapper_service.sh
+- stop_k3d_wrapper_service.sh
 
 ## Troubleshooting
 
-### Port 9000 Already in Use
+### Service not reachable
 
 ```bash
-lsof -i :9000
-kill -9 <PID>
+kubectl -n benchmark get pods
+kubectl -n benchmark get svc mongo-wrapper
+k3d cluster list
+curl http://localhost:9010/health
 ```
 
-### MongoDB Connection Fails
-
-- Verify MONGO_URI is correct
-- Check security groups allow inbound on MongoDB port
-- Test connectivity: `nc -zv cluster.mongodb.net 27017`
-
-### k6 Health Check Fails
+### MongoDB connection errors in pods
 
 ```bash
-curl http://localhost:9000/health
+kubectl -n benchmark logs deploy/mongo-wrapper --tail=200
+kubectl -n benchmark get secret mongo-wrapper-secrets -o yaml
 ```
 
-Should return: `{"status":"ok"}`
-
-### Low Query Latency Seems Wrong
-
-- Ensure MongoDB wrapper is running (separate terminal)
-- Check wrapper logs for errors
-- Verify MIN_POOL_SIZE and MAX_POOL_SIZE are appropriate for concurrency level
-
-## Performance Tuning
-
-### Increase Concurrency
+Recreate secret with current URI:
 
 ```bash
-./run_benchmark.sh 100 5 1 10
-# USERS=100, MINUTES=5, FIND_WAIT_MS=1, AGG_WAIT_MS=10
+kubectl -n benchmark create secret generic mongo-wrapper-secrets \
+  --from-literal=MONGO_URI="$MONGO_URI" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n benchmark rollout restart deployment/mongo-wrapper
 ```
 
-### Adjust Connection Pool
+### Need different replica count
 
 ```bash
-MIN_POOL_SIZE=20 MAX_POOL_SIZE=200 PORT=9000 ./mongo_wrapper
+./start_k3d_wrapper_service.sh 20
 ```
 
-### Export Results
+or
 
 ```bash
-k6 run benchmarks/benchmark_k6_http.js --out json=results.json
+kubectl -n benchmark scale deployment/mongo-wrapper --replicas=20
 ```
-
-## EC2 Instance Recommendations
-
-- **Type**: `t3.xlarge` or larger for 20+ concurrent users
-- **Storage**: `30GB` EBS (gp3 recommended)
-- **Security Groups**: 
-  - Allow port 9000 (wrapper)
-  - Allow port 27017 (MongoDB, if local)
-  - SSH port 22
-- **VPC**: Same as MongoDB cluster if using Atlas (or allow outbound to Atlas IP)
-
-## Next Steps
-
-See README.md for full documentation and advanced usage.

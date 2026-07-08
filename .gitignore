@@ -40,8 +40,8 @@ go.mod.backup
 # Input & Out Files
 *.csv
 *.json
-*.yaml
 
 # NGINX Worker
 nginx.pid
 *.pid
+.nginx/nginx-workers.generated.conf
