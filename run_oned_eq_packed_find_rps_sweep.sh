@@ -7,6 +7,8 @@
 #
 # Env overrides:
 #   API_BASE_URL
+#   SWEEP_API_BASE_URL (preferred override for this script)
+#   SWEEP_ALLOW_SINGLE_WORKER=1 (allow API_BASE_URL=...:9000)
 #   MINUTES (default: 1)
 #   PREALLOCATED_VUS (default: 50)
 #   MAX_VUS (default: 1500)
@@ -23,7 +25,11 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-API_BASE_URL=${API_BASE_URL:-http://localhost:9010}
+API_BASE_URL=${SWEEP_API_BASE_URL:-${API_BASE_URL:-http://localhost:9010}}
+if [ "${SWEEP_ALLOW_SINGLE_WORKER:-0}" != "1" ]; then
+    API_BASE_URL="${API_BASE_URL/localhost:9000/localhost:9010}"
+    API_BASE_URL="${API_BASE_URL/127.0.0.1:9000/127.0.0.1:9010}"
+fi
 MINUTES=${MINUTES:-1}
 PREALLOCATED_VUS=${PREALLOCATED_VUS:-50}
 MAX_VUS=${MAX_VUS:-2500}
@@ -68,7 +74,7 @@ for rps in "${RPS_VALUES[@]}"; do
     echo "▶ Running RPS=${rps} for ${MINUTES} minute(s)"
     LOG_FILE="${OUT_DIR}/rps_${rps}.log"
 
-        k6 run -q --summary-mode=compact \
+k6 run -q --no-progress --summary-mode=compact \
       --env API_BASE_URL="${API_BASE_URL}" \
       --env RPS="${rps}" \
       --env MINUTES="${MINUTES}" \
