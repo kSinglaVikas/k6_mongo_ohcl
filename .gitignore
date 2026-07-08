@@ -45,3 +45,6 @@ go.mod.backup
 nginx.pid
 *.pid
 .nginx/nginx-workers.generated.conf
+
+# MongoDB Dump
+dump/
