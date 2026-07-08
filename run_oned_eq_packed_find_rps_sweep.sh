@@ -48,11 +48,6 @@ if ! curl -s "${API_BASE_URL}/health" >/dev/null 2>&1; then
 fi
 echo "✅ API is ready"
 
-if [ "$API_BASE_URL" = "http://localhost:9000" ]; then
-    echo "⚠️ API_BASE_URL is set to single wrapper port 9000; load will not be distributed across workers."
-    echo "   Use API_BASE_URL=http://localhost:9010 for Nginx load balancing."
-fi
-
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUT_DIR=".logs/packed-find-rps-sweep-${TIMESTAMP}"
 mkdir -p "$OUT_DIR"
@@ -73,7 +68,7 @@ for rps in "${RPS_VALUES[@]}"; do
     echo "▶ Running RPS=${rps} for ${MINUTES} minute(s)"
     LOG_FILE="${OUT_DIR}/rps_${rps}.log"
 
-    k6 run \
+        k6 run -q --summary-mode=compact \
       --env API_BASE_URL="${API_BASE_URL}" \
       --env RPS="${rps}" \
       --env MINUTES="${MINUTES}" \

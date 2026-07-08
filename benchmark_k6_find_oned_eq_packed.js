@@ -4,7 +4,7 @@
  * Runs one scenario that performs /find on oned-eq-packed using symbols_eq.csv.
  *
  * Env vars:
- *   API_BASE_URL               default: http://localhost:9000
+ *   API_BASE_URL               default: http://localhost:9010
  *   RPS                        default: TOTAL_RPS or 100
  *   TOTAL_RPS                  optional fallback for RPS
  *   PREALLOCATED_VUS           default: 50
@@ -17,7 +17,7 @@ import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
 
-const API_BASE_URL = __ENV.API_BASE_URL || 'http://localhost:9000';
+const API_BASE_URL = __ENV.API_BASE_URL || 'http://localhost:9010';
 const RPS = parseInt(__ENV.RPS || __ENV.TOTAL_RPS || '100', 10);
 const PREALLOCATED_VUS = parseInt(__ENV.PREALLOCATED_VUS || '50', 10);
 const MAX_VUS = parseInt(__ENV.MAX_VUS || '500', 10);
