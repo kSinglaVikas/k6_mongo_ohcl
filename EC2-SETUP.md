@@ -76,7 +76,7 @@ cd k6_mongo_ohcl
 ### 8. Build the MongoDB Wrapper
 
 ```bash
-go build -o mongo_wrapper main.go
+(cd app && go build -o ../mongo_wrapper .)
 ```
 
 This automatically downloads:
@@ -116,7 +116,7 @@ k6 run \
   --env MINUTES=2 \
   --env FIND_WAIT_MS=1 \
   --env AGG_WAIT_MS=10 \
-  benchmark_k6_http.js
+  benchmarks/benchmark_k6_http.js
 ```
 
 ## Environment Variables
@@ -183,7 +183,7 @@ MIN_POOL_SIZE=20 MAX_POOL_SIZE=200 PORT=9000 ./mongo_wrapper
 ### Export Results
 
 ```bash
-k6 run benchmark_k6_http.js --out json=results.json
+k6 run benchmarks/benchmark_k6_http.js --out json=results.json
 ```
 
 ## EC2 Instance Recommendations

@@ -73,4 +73,4 @@ k6 run \
     --env AGG_PHASE_RPS=$AGG_PHASE_RPS \
     --env HIST_WINDOW_MIN_DAYS=$HIST_WINDOW_MIN_DAYS \
     --env HIST_WINDOW_MAX_DAYS=$HIST_WINDOW_MAX_DAYS \
-    benchmark_k6_http.js
+    benchmarks/benchmark_k6_http.js

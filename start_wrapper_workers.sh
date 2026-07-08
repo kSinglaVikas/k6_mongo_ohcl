@@ -49,10 +49,10 @@ done
 NGINX_CONFIG_PATH="$DIR/.nginx/nginx-workers.generated.conf"
 
 echo "📦 Building Go wrapper..."
-if [ ! -f "go.sum" ]; then
-    go mod tidy
+if [ ! -f "app/go.sum" ]; then
+    (cd app && go mod tidy)
 fi
-go build -o mongo_wrapper main.go
+(cd app && go build -o ../mongo_wrapper .)
 echo "✅ Go wrapper built"
 
 echo "🚀 Starting $WORKER_COUNT wrapper worker(s) on ports: ${ports[*]}"

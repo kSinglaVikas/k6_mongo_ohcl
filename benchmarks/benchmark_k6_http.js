@@ -25,7 +25,7 @@
  *      brew install k6   (on macOS)
  *
  * Run:
- *   k6 run benchmark_k6_http.js
+ *   k6 run benchmarks/benchmark_k6_http.js
  *
  * Tune via env vars (all optional):
  *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:9010)
@@ -100,13 +100,13 @@ function parseSymbolsCsv(content) {
 }
 
 const SYMBOL_POOL_EQ = new SharedArray('symbols_eq', function () {
-  return parseSymbolsCsv(open('./symbols_eq.csv'));
+  return parseSymbolsCsv(open('../data/symbols_eq.csv'));
 });
 const SYMBOL_POOL_HISTORIC = new SharedArray('symbols_historic', function () {
-  return parseSymbolsCsv(open('./symbols_historic.csv'));
+  return parseSymbolsCsv(open('../data/symbols_historic.csv'));
 });
 const SYMBOL_POOL_FNO = new SharedArray('symbols_fno', function () {
-  return parseSymbolsCsv(open('./symbols_fno.csv'));
+  return parseSymbolsCsv(open('../data/symbols_fno.csv'));
 });
 
 // ---------------------------------------------------------------------------

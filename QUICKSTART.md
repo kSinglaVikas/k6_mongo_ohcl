@@ -34,7 +34,7 @@ k6 run \
   --env RATE_STEP_SECONDS=5 \
   --env PREALLOCATED_VUS=50 \
   --env MAX_VUS=500 \
-  benchmark_k6_http.js
+  benchmarks/benchmark_k6_http.js
 ```
 
 ## Traffic Mix
@@ -51,7 +51,7 @@ With `TOTAL_RPS=100`, target rates become `50/10/20/5/15 req/s`.
 
 ## Environment Variables
 
-### Wrapper (`main.go`)
+### Wrapper (`app/main.go`)
 
 ```bash
 export MONGO_URI="mongodb://localhost:27017"
@@ -62,7 +62,7 @@ export PORT="9000"
 export DEBUG="false"
 ```
 
-### k6 (`benchmark_k6_http.js`)
+### k6 (`benchmarks/benchmark_k6_http.js`)
 
 ```bash
 export API_BASE_URL="http://localhost:9000"

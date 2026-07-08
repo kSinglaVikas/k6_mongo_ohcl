@@ -4,11 +4,11 @@ This benchmark uses k6 plus a Go HTTP wrapper for MongoDB queries.
 
 ## Architecture
 
-- `main.go`
+- `app/main.go`
   - `POST /find`
   - `POST /aggregate`
   - `GET /health`
-- `benchmark_k6_http.js`
+- `benchmarks/benchmark_k6_http.js`
   - 10 weighted scenarios using `ramping-arrival-rate`
 
 ## Current Scenario Set
@@ -72,7 +72,7 @@ mongosh "$MONGO_URI" --quiet --eval '
     { $limit: 400 },
     { $project: { cnt: 0 } }
   ]).toArray().map(d => d._id).join("\n")
-' > symbols_eq.csv
+' > data/symbols_eq.csv
 
 # Pull top 400 from historic-eq
 mongosh "$MONGO_URI" --quiet --eval '
@@ -83,7 +83,7 @@ mongosh "$MONGO_URI" --quiet --eval '
     { $limit: 400 },
     { $project: { cnt: 0 } }
   ]).toArray().map(d => d._id).join("\n")
-' > symbols_historic.csv
+' > data/symbols_historic.csv
 
 # Pull top 400 from oned-fno
 mongosh "$MONGO_URI" --quiet --eval '
@@ -95,7 +95,7 @@ mongosh "$MONGO_URI" --quiet --eval '
     { $limit: 400 },
     { $project: { cnt: 0 } }
   ]).toArray().map(d => d._id).join("\n")
-' > symbols_fno.csv
+' > data/symbols_fno.csv
 
 ```
 
@@ -128,8 +128,8 @@ Notes:
 ```bash
 cd k6_mongo_ohcl
 
-go mod download
-go build -o mongo_wrapper main.go
+(cd app && go mod download)
+(cd app && go build -o ../mongo_wrapper .)
 
 MONGO_URI="mongodb+srv://user:pass@cluster.mongodb.net/ohcl_data?retryWrites=true" \
 PORT=9000 \
@@ -176,7 +176,7 @@ k6 run \
   --env ONED_FNO_PACKED_COLLECTION=oned-fno-packed \
   --env HIST_WINDOW_MIN_DAYS=5 \
   --env HIST_WINDOW_MAX_DAYS=30 \
-  benchmark_k6_http.js
+  benchmarks/benchmark_k6_http.js
 ```
 
 If using multi-worker mode (`./start_wrapper_workers.sh`), run against Nginx:
@@ -189,7 +189,7 @@ API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 
 ## Environment Variables
 
-### Wrapper (`main.go`)
+### Wrapper (`app/main.go`)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -200,7 +200,7 @@ API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 | `PORT` | `8080` | HTTP listen port |
 | `DEBUG` | `false` | Enable debug logs |
 
-### k6 (`benchmark_k6_http.js`)
+### k6 (`benchmarks/benchmark_k6_http.js`)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -236,12 +236,7 @@ Custom metrics emitted include:
 - corresponding `*_count` trends
 - `find_errors`, `agg_errors`, `http_errors`
 
-`benchmark_k6_http.js` also defines `handleSummary()` to print custom metrics in two sections:
-
-- TS Metrics
-- Packed Metrics
-
-and writes full raw output to `summary.json`.
+`benchmarks/benchmark_k6_http.js` writes full raw output to `summary.json`.
 
 ## Notes
 

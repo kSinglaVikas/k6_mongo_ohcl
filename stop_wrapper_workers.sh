@@ -21,7 +21,7 @@ echo "🛑 Stopping Nginx load balancer..."
 if [ -f ".nginx/logs/nginx.pid" ]; then
     NGINX_CONFIG="$DIR/.nginx/nginx-workers.generated.conf"
     if [ ! -f "$NGINX_CONFIG" ]; then
-        NGINX_CONFIG="$DIR/nginx-workers.conf"
+        NGINX_CONFIG="$DIR/config/nginx-workers.conf"
     fi
     nginx -p "$DIR/.nginx" -c "$NGINX_CONFIG" -s quit || true
 fi

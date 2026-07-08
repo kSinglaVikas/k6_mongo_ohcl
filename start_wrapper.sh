@@ -35,10 +35,10 @@ fi
 MONGO_HOST=$(echo "$MONGO_URI" | sed -E 's#^[a-zA-Z0-9+.-]+://##; s#^[^@]*@##; s#/.*$##; s#\?.*$##')
 
 echo "📦 Building Go wrapper..."
-if [ ! -f "go.sum" ]; then
-    go mod tidy
+if [ ! -f "app/go.sum" ]; then
+    (cd app && go mod tidy)
 fi
-go build -o mongo_wrapper main.go
+(cd app && go build -o ../mongo_wrapper .)
 echo "✅ Go wrapper built"
 
 echo ""
@@ -48,7 +48,7 @@ echo "   MONGO_HOST=${MONGO_HOST:-<unknown>}"
 echo ""
 echo "⚠️  To run the benchmark, open a new terminal and run:"
 echo "   cd $DIR"
-echo "   k6 run benchmark_k6_http.js"
+echo "   k6 run benchmarks/benchmark_k6_http.js"
 echo ""
 
 # Start the wrapper in the foreground

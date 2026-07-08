@@ -15,6 +15,7 @@
 #   ONED_EQ_PACKED_COLLECTION (default: oned-eq-packed)
 
 set -e
+set -o pipefail
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
@@ -81,7 +82,7 @@ k6 run -q --summary-mode=compact \
       --env PREALLOCATED_VUS="${PREALLOCATED_VUS}" \
       --env MAX_VUS="${MAX_VUS}" \
       --env ONED_EQ_PACKED_COLLECTION="${ONED_EQ_PACKED_COLLECTION}" \
-      benchmark_k6_find_oned_eq_packed.js | tee "${LOG_FILE}"
+    benchmarks/benchmark_k6_find_oned_eq_packed.js | tee "${LOG_FILE}"
 
     echo "✔ Completed RPS=${rps}, log saved to ${LOG_FILE}"
     echo ""

@@ -44,7 +44,7 @@ function parseSymbolsCsv(content) {
 }
 
 const SYMBOL_POOL_EQ = new SharedArray('symbols_eq', function () {
-  return parseSymbolsCsv(open('./symbols_eq.csv'));
+  return parseSymbolsCsv(open('../data/symbols_eq.csv'));
 });
 
 function randomChoice(arr) {
