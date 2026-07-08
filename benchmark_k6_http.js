@@ -28,7 +28,7 @@
  *   k6 run benchmark_k6_http.js
  *
  * Tune via env vars (all optional):
- *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:8080)
+ *   API_BASE_URL       — HTTP wrapper base URL      (default: http://localhost:9010)
  *   TOTAL_RPS          — total req/sec across scenarios (default: 100)
  *   FIND_PHASE_RPS     — total req/sec during find phase (default: TOTAL_RPS)
  *   AGG_PHASE_RPS      — total req/sec during aggregate phase (default: TOTAL_RPS)
@@ -56,7 +56,7 @@ import { SharedArray } from 'k6/data';
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const API_BASE_URL = __ENV.API_BASE_URL  || 'http://localhost:9000';
+const API_BASE_URL = __ENV.API_BASE_URL  || 'http://localhost:9010';
 const TOTAL_RPS    = parseInt(__ENV.TOTAL_RPS || '100');
 const FIND_PHASE_RPS = parseInt(__ENV.FIND_PHASE_RPS || String(TOTAL_RPS));
 const AGG_PHASE_RPS  = parseInt(__ENV.AGG_PHASE_RPS || String(TOTAL_RPS));
