@@ -32,6 +32,14 @@ Verify:
 docker version
 ```
 
+If you still get permission denied for `/var/run/docker.sock`:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+docker info
+```
+
 ## 3. Install kubectl
 
 ```bash
@@ -109,12 +117,6 @@ curl http://localhost:9010/health
 API_BASE_URL=http://localhost:9010 ./run_benchmark.sh
 ```
 
-Or packed-find sweep:
-
-```bash
-./run_oned_eq_packed_find_rps_sweep.sh 1000
-```
-
 ## 10. Stop Stack
 
 Remove workload only:
@@ -148,6 +150,54 @@ kubectl -n benchmark get pods
 kubectl -n benchmark get svc mongo-wrapper
 k3d cluster list
 curl http://localhost:9010/health
+```
+
+`k3d status` is not a valid command. Use `k3d cluster list`.
+
+### Track pod CPU and memory
+
+Install Metrics Server once:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl -n kube-system rollout status deployment/metrics-server
+```
+
+View live pod usage:
+
+```bash
+kubectl top pods -n benchmark --sort-by=cpu
+watch -n 2 "kubectl top pods -n benchmark --sort-by=cpu"
+```
+
+If Metrics API is unavailable on k3d, patch once:
+
+```bash
+kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP"}]'
+```
+
+### EOF errors under high RPS (example: Post /find EOF)
+
+These usually mean connections are being closed before an HTTP response (often pod restarts or node/service saturation).
+
+Check for restarts and OOMs:
+
+```bash
+kubectl -n benchmark get pods
+kubectl -n benchmark describe pod <pod-name>
+kubectl -n benchmark get events --sort-by=.lastTimestamp | tail -n 40
+kubectl -n benchmark logs deploy/mongo-wrapper --tail=200
+```
+
+Immediate mitigations:
+
+```bash
+# Increase wrapper replicas
+kubectl -n benchmark scale deployment/mongo-wrapper --replicas=20
+
+# Recreate cluster with more worker nodes for k3d dataplane
+DESTROY_CLUSTER=1 ./stop_k3d_wrapper_service.sh
+K3D_AGENTS=4 ./start_k3d_wrapper_service.sh 20
 ```
 
 ### MongoDB connection errors in pods

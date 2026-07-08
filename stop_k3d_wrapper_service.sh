@@ -17,6 +17,18 @@ if ! command -v k3d >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+    echo "❌ docker is required"
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker daemon is not accessible for the current user."
+    echo "   Fix: sudo usermod -aG docker $USER"
+    echo "   Then log out/login (or run: newgrp docker) and retry."
+    exit 1
+fi
+
 if k3d cluster list | awk '{print $1}' | grep -qx "$CLUSTER_NAME"; then
     kubectl config use-context "k3d-${CLUSTER_NAME}" >/dev/null || true
 

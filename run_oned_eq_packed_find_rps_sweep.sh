@@ -11,7 +11,7 @@
 #   SWEEP_ALLOW_SINGLE_WORKER=1 (allow API_BASE_URL=...:9000)
 #   MINUTES (default: 1)
 #   PREALLOCATED_VUS (default: 50)
-#   MAX_VUS (default: 1500)
+#   MAX_VUS (default: 8000)
 #   ONED_EQ_PACKED_COLLECTION (default: oned-eq-packed)
 
 set -e
@@ -33,7 +33,7 @@ if [ "${SWEEP_ALLOW_SINGLE_WORKER:-0}" != "1" ]; then
 fi
 MINUTES=${MINUTES:-1}
 PREALLOCATED_VUS=${PREALLOCATED_VUS:-50}
-MAX_VUS=${MAX_VUS:-2500}
+MAX_VUS=${MAX_VUS:-8000}
 ONED_EQ_PACKED_COLLECTION=${ONED_EQ_PACKED_COLLECTION:-oned-eq-packed}
 
 if [ "$#" -gt 0 ]; then
@@ -75,12 +75,18 @@ for rps in "${RPS_VALUES[@]}"; do
     echo "▶ Running RPS=${rps} for ${MINUTES} minute(s)"
     LOG_FILE="${OUT_DIR}/rps_${rps}.log"
 
+    if [ "${MAX_VUS}" -lt "${PREALLOCATED_VUS}" ]; then
+        MAX_VUS=${PREALLOCATED_VUS}
+    fi
+
+    echo "   using PREALLOCATED_VUS=${PREALLOCATED_VUS} MAX_VUS=${MAX_VUS}"
+
 k6 run -q --summary-mode=compact \
       --env API_BASE_URL="${API_BASE_URL}" \
       --env RPS="${rps}" \
       --env MINUTES="${MINUTES}" \
-      --env PREALLOCATED_VUS="${PREALLOCATED_VUS}" \
-      --env MAX_VUS="${MAX_VUS}" \
+            --env PREALLOCATED_VUS="${PREALLOCATED_VUS}" \
+            --env MAX_VUS="${MAX_VUS}" \
       --env ONED_EQ_PACKED_COLLECTION="${ONED_EQ_PACKED_COLLECTION}" \
     benchmarks/benchmark_k6_find_oned_eq_packed.js | tee "${LOG_FILE}"
 

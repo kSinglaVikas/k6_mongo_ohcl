@@ -13,6 +13,7 @@ spec:
       labels:
         app: mongo-wrapper
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: mongo-wrapper
           image: mongo-wrapper:latest
@@ -58,22 +59,32 @@ spec:
                 configMapKeyRef:
                   name: mongo-wrapper-config
                   key: MIN_POOL_SIZE
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            failureThreshold: 30
+            periodSeconds: 2
           readinessProbe:
             httpGet:
               path: /health
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /health
               port: 9000
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
-              cpu: 1000m
-              memory: 512Mi
+              cpu: 2000m
+              memory: 1Gi

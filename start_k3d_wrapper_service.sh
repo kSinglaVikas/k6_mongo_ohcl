@@ -16,10 +16,22 @@ CLUSTER_NAME=${CLUSTER_NAME:-mongo-wrapper}
 NAMESPACE=${NAMESPACE:-benchmark}
 REPLICAS=${1:-${REPLICAS:-10}}
 IMAGE_NAME=${IMAGE_NAME:-mongo-wrapper:latest}
+K3D_SERVERS=${K3D_SERVERS:-1}
+K3D_AGENTS=${K3D_AGENTS:-3}
 
 if ! [[ "$REPLICAS" =~ ^[1-9][0-9]*$ ]]; then
     echo "❌ Invalid replica count: $REPLICAS"
     echo "Usage: ./start_k3d_wrapper_service.sh [replicas]"
+    exit 1
+fi
+
+if ! [[ "$K3D_SERVERS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "❌ Invalid K3D_SERVERS value: $K3D_SERVERS"
+    exit 1
+fi
+
+if ! [[ "$K3D_AGENTS" =~ ^[0-9]+$ ]]; then
+    echo "❌ Invalid K3D_AGENTS value: $K3D_AGENTS"
     exit 1
 fi
 
@@ -35,12 +47,19 @@ for cmd in docker k3d kubectl; do
     fi
 done
 
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker daemon is not accessible for the current user."
+    echo "   Fix: sudo usermod -aG docker $USER"
+    echo "   Then log out/login (or run: newgrp docker) and retry."
+    exit 1
+fi
+
 echo "📦 Building Docker image ${IMAGE_NAME} ..."
 docker build -f app/Dockerfile -t "$IMAGE_NAME" app
 
 if ! k3d cluster list | awk '{print $1}' | grep -qx "$CLUSTER_NAME"; then
-    echo "🚀 Creating k3d cluster ${CLUSTER_NAME} (maps localhost:9010 -> NodePort 30090) ..."
-    k3d cluster create "$CLUSTER_NAME" --servers 1 --agents 2 -p "9010:30090@server:0" --wait
+    echo "🚀 Creating k3d cluster ${CLUSTER_NAME} (servers=${K3D_SERVERS}, agents=${K3D_AGENTS}, localhost:9010 -> NodePort 30090) ..."
+    k3d cluster create "$CLUSTER_NAME" --servers "$K3D_SERVERS" --agents "$K3D_AGENTS" -p "9010:30090@server:0" --wait
 else
     echo "ℹ️ Reusing existing k3d cluster: ${CLUSTER_NAME}"
 fi
